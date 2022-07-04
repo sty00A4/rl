@@ -1,9 +1,6 @@
-func test(a, b)
-    print(a)
-    print(b)
+func greet(name)
+    print("hello "+name+"! how are you?")
 end
 
-a is 1
-b is 2
-test(b, a)
-print(a); print(b)
+name is "sty00a4"
+greet(name)
