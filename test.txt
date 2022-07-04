@@ -1,0 +1,9 @@
+func test(a, b)
+    print(a)
+    print(b)
+end
+
+a is 1
+b is 2
+test(b, a)
+print(a); print(b)
