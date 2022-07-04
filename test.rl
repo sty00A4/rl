@@ -1,6 +1,2 @@
-func greet(name)
-    print("hello "+name+"! how are you?")
-end
-
-name is "sty00a4"
-greet(name)
+name is 1
+return &name

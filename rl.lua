@@ -68,13 +68,13 @@ local concat = table.concat
 local copy = table.copy
 local filter = table.filter
 local find = table.find
-local contains = table.contains
-local containsStart = table.containsStart
-local containsKey = table.containsKey
 local sub = table.sub
 local split = string.split
 local splits = string.splits
 local join = string.join
+local contains = table.contains
+local containsStart = table.containsStart
+local containsKey = table.containsKey
 TYPE = type
 type = function(v)
     if getmetatable(v) then if getmetatable(v).__name then return tostring(getmetatable(v).__name) end end
@@ -118,7 +118,7 @@ local words = {
              range = "Range", func = "Func", luaFunc = "LuaFunc" }
 }
 local symbols = {
-    nl = ";", rep = ":", sep = ",", safe = "?", index = ".", into = "->",
+    nl = ";", rep = ":", sep = ",", safe = "?", index = ".", into = "->", addr = "&",
     add = "+", sub = "-", mul = "*", div = "/", idiv = "//", pow = "**", mod = "%",
     eq = "=", ne = "!=", lt = "<", gt = ">", le = "<=", ge = ">="
 }
@@ -335,7 +335,7 @@ local function parse(tokens)
     local function advance() idx=idx+1 update() end
     advance()
     local statements, statement, expr, typecast, logic, comp, contain, range, arith, term, factor, power, call, safe,
-    idxList, index, atom
+    idxList, addr, index, atom
     local function binOp(f1, ops, f2)
         if not f2 then f2 = f1 end
         local start, stop = tok.pr.start:copy(), tok.pr.stop:copy()
@@ -388,9 +388,20 @@ local function parse(tokens)
     index = function()
         return binOp(atom, { Token("index") })
     end
+    addr = function()
+        if tok == Token("addr") then
+            local start = tok.pr.start:copy()
+            advance()
+            local stop = tok.pr.stop:copy()
+            local node, err = index() if err then return nil, err end
+            stop = tok.pr.stop:copy()
+            return Node("addr", { node }, PositionRange(start, stop))
+        end
+        return index()
+    end
     idxList = function()
         local start, stop = tok.pr.start:copy(), tok.pr.stop:copy()
-        local node, err = index() if err then return nil, err end
+        local node, err = addr() if err then return nil, err end
         if tok == Token("idxList","in") then
             advance()
             local indexNode indexNode, err = expr() if err then return nil, err end
@@ -750,12 +761,6 @@ local MEMORY MEMORY = Memory({
         local _, err = scopes:setAddr(node, args[1].value, args[2].value, MEMORY) if err then return nil, false, err end
         return Null()
     end, Type("null")),
-    -- addr
-    LuaFunc({ "var" }, function(scopes, node, args)
-        if type(args[1]) ~= "String" then return nil, false, Error("lua func error", "expected String as #1 argument", node.pr:copy()) end
-        local addr, err = scopes:getAddr(node, args[1].value) if err then return nil, false, err end
-        return Number(addr)
-    end, Type("number")),
 })
 local function Scope(vars, label)
     if not label then label = "<sub>" end
@@ -794,7 +799,8 @@ local function Scopes(scopes)
                 end
                 return nil, Error("name error", "name '"..name.."' cannot be found", node.pr:copy())
             end, get = function(s, node, memory)
-                local name = node.args[1].value
+                local name = node
+                if type(node) ~= "string" then name = node.args[1].value end
                 local scope
                 for _, v in ipairs(s.scopes) do if v:get(name) then scope=v end end
                 if scope then
@@ -879,6 +885,11 @@ local function interpret(ast)
                 return nil, false, err
             end
             return value
+        end,
+        addr = function(node)
+            local name = node.args[1]
+            local addr, err = scopes:getAddr(node, name.args[1].value) if err then return nil, false, err end
+            return Number(addr)
         end,
         ["return"] = function(node)
             local value, _, err = visit(node.args[1]) if err then return value, true, err end
@@ -1145,7 +1156,8 @@ end
 return {
     lex = lex, parse = parse, interpret = interpret,
     Number = Number, Bool = Bool, String = String, Type = Type, Null = Null, List = List, Range = Range,
-    Func = Func, LuaFunc = LuaFunc,
+    Func = Func, LuaFunc = LuaFunc, Memory = Memory, Scope = Scope, Scopes = Scopes,
+    Token = Token, Node = Node,
     ast2str = function(s, ast)
         if not ast then return "()" end
 
