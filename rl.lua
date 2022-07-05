@@ -286,7 +286,7 @@ local function lex(fn, text)
                     end
                 end
             end
-            return Error("syntax error", "unrecognized symbol'"..symbol.."'", PositionRange(start, stop))
+            return Error("syntax error", "unrecognized symbol '"..symbol.."'", PositionRange(start, stop))
         end
         if contains(string.letters, char) then
             local start = pos:copy()
