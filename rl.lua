@@ -111,7 +111,7 @@ local words = {
         assign = "is", cast = "as", inc = "inc", dec = "dec", with = "with", to = "to", contain = "in",
         ["return"] = "return", ["and"] = "and", ["or"] = "or", ["xor"] = "xor", ["not"] = "not",
         ["end"] = "end", ["if"] = "if", ["else"] = "else", ["elif"] = "elif", ["while"] = "while",
-        ["for"] = "for", of = "of", func = "func"
+        ["for"] = "for", of = "of", func = "func", ["break"] = "break", skip = "skip"
     },
     bool = { "true", "false" },
     null = "null",
@@ -315,7 +315,7 @@ local function lex(fn, text)
         return Error("syntax error", "unrecognizable character '"..char.."'", PositionRange(pos, pos))
     end
     while #char > 0 do local err = main() if err then return nil, err end end
-    push(tokens, Token("eof","end of file",PositionRange(pos:copy(), pos:copy())))
+    push(tokens, Token("eof",nil,PositionRange(pos:copy(), pos:copy())))
     return tokens
 end
 
@@ -453,7 +453,7 @@ local function parse(tokens)
         end
         return power()
     end
-    term = function() return binOp(factor, { Token("mul"), Token("div"), Token("idiv") }) end
+    term = function() return binOp(factor, { Token("mul"), Token("div"), Token("idiv"), Token("mod") }) end
     arith = function() return binOp(term, { Token("add"), Token("sub") }) end
     range = function() return binOp(arith, { Token("kw","to") }) end
     typecast = function() return binOp(range, { Token("kw","cast") }) end
@@ -592,6 +592,8 @@ local function parse(tokens)
             local nameNode, err = index() if err then return nil, err end
             return Node("dec",{ nameNode },PositionRange(start, tok.pr.stop:copy()))
         end
+        if tok == Token("kw","break") then local tok_=tok:copy() advance() return Node("break",{ tok_:copy() },tok_.pr:copy()) end
+        if tok == Token("kw","skip") then local tok_=tok:copy() advance() return Node("skip",{ tok_:copy() },tok_.pr:copy()) end
         local node, err = expr() if err then return nil, err end
         if tok == Token("kw","assign") then
             if node.name ~= "name" and node.name ~= "index" then
@@ -680,7 +682,7 @@ String = function(str_)
                   return List(list)
               end,
             },
-            { __name = "String", __tostring = function(s) return str(s.value,true) end }
+            { __name = "String", __tostring = function(s) return str(s.value) end }
     )
 end
 Type = function(type_)
@@ -1107,11 +1109,15 @@ local function interpret(ast)
                 if opTok.value == "not" then if type(value) == "Bool" then return Bool(not value.value) end end
             end
         end,
-        body = function(node, name)
+        body = function(node, name, breakable, skippable)
             scopes:new(Scope(nil, name))
             for _, n in ipairs(node.args) do
                 local value, returning, err = visit(n) if err then return nil, false, err end
-                if returning then scopes:drop() return value, returning end
+                if returning then
+                    if returning == "break" and breakable then scopes:drop() return value, returning end
+                    if returning == "skip" and skippable then scopes:drop() return value, returning end
+                    if returning == true then scopes:drop() return value, returning end
+                end
             end
             scopes:drop()
             return Null()
@@ -1133,10 +1139,10 @@ local function interpret(ast)
             local cond, _, err = visit(condNode) if err then return nil, false, err end
             if not cond.toBool then return nil, false, Error("value error", "expected Bool", condNode.pr:copy()) end
             while cond.value do
-                value, returning, err = visit(bodyNode) if err then return nil, false, err end
+                value, returning, err = visit(bodyNode, "while", true, true) if err then return nil, false, err end
                 if returning then
                     if returning == "break" then break end
-                    return value
+                    if returning ~= "skip" then return value end
                 end
                 cond, _, err = visit(condNode) if err then return nil, false, err end
                 if not cond.toBool then return nil, false, Error("value error", "expected Bool", condNode.pr:copy()) end
@@ -1149,10 +1155,10 @@ local function interpret(ast)
             if type(range) ~= "Range" then return nil, false, Error("value error", "expected Range", rangeNode.pr:copy()) end
             local dir = 1 if range.start > range.stop then dir = -1 end
             for i = range.start, range.stop, dir do
-                value, returning, err = visit(bodyNode) if err then return nil, false, err end
+                value, returning, err = visit(bodyNode, "for", true, true) if err then return nil, false, err end
                 if returning then
                     if returning == "break" then break end
-                    return value
+                    if returning ~= "skip" then return value end
                 end
             end
             return Null()
@@ -1166,11 +1172,11 @@ local function interpret(ast)
                 for i = iterator.start, iterator.stop, dir do
                     scopes:new(Scope())
                     scopes:set(nameNode, Number(i), MEMORY)
-                    value, returning, err = visit(bodyNode) if err then return nil, false, err end
+                    value, returning, err = visit(bodyNode, "forOf", true, true) if err then return nil, false, err end
                     scopes:drop()
                     if returning then
                         if returning == "break" then break end
-                        return value
+                        if returning ~= "skip" then return value end
                     end
                 end
                 return Null()
@@ -1183,17 +1189,19 @@ local function interpret(ast)
                 for i, x in ipairs(iterator.values) do
                     scopes:new(Scope())
                     scopes:set(nameNode, x:copy(), MEMORY)
-                    value, returning, err = visit(bodyNode) if err then return nil, false, err end
+                    value, returning, err = visit(bodyNode, "forOf", true, true) if err then return nil, false, err end
                     scopes:drop()
                     if returning then
                         if returning == "break" then break end
-                        return value
+                        if returning ~= "skip" then return value end
                     end
                 end
                 return Null()
             end
             return nil, false, Error("iteration error", "cannot iterate with "..type(iterator), iterNode.pr:copy())
         end,
+        ["break"] = function() return Null(), "break" end,
+        skip = function() return Null(), "skip" end,
         func = function(node)
             local type_, err if node.args[4] then
                 type_, _, err = visit(node.args[4]) if err then return nil, false, err end
@@ -1275,9 +1283,9 @@ local function interpret(ast)
             return nil, false, Error("name error", "address "..tostring(addr.value).." is not in memory", node.args[1].pr.copy())
         end,
     }
-    visit = function(node)
+    visit = function(node, ...)
         if not node then error("no node given", 2) end
-        if nodes[node.name] then return nodes[node.name](node) end
+        if nodes[node.name] then return nodes[node.name](node, ...) end
         return nodes.notImplemented(node)
     end
     if not ast then return Null() end
@@ -1293,9 +1301,10 @@ return {
     Token = Token, Node = Node,
     ast2str = function(s, ast)
         if not ast then return "()" end
-
         if type(ast) == "Node" then
             if ast.name == "number" then return "(" .. ast.args[1].value .. ")" end
+            if ast.name == "break" then return "(break)" end
+            if ast.name == "skip" then return "(skip)" end
             if ast.name == "bool" then return "(" .. ast.args[1].value .. ")" end
             if ast.name == "string" then return "(\"" .. ast.args[1].value .. "\")" end
             if ast.name == "type" then return "(" .. ast.args[1].value .. ")" end
@@ -1334,7 +1343,7 @@ return {
             if ast.name == "body" then
                 local str_ = "(\n"
                 for _, node in ipairs(ast.args) do
-                    str_ = str_ .. s(s,node) .. "\n"
+                    str_ = str_ .. s(s,node) .. ";\n"
                 end
                 return str_ .. ")"
             end
@@ -1348,6 +1357,9 @@ return {
                 end
                 return str_ .. "end)"
             end
+            if ast.name == "while" then return "(while " .. s(s,ast.args[1]) .. " " .. s(s,ast.args[2]) .. "end)" end
+            if ast.name == "for" then return "(for " .. s(s,ast.args[1]) .. " " .. s(s,ast.args[2]) .. "end)" end
+            if ast.name == "forOf" then return "(for " .. s(s,ast.args[1]) .. " of " .. s(s,ast.args[2]) .. " " .. s(s,ast.args[3]) .. "end)" end
             if ast.name == "func" then
                 local str_ = "(func " .. s(s,ast.args[1]) .. " ("
                 for _, node in ipairs(ast.args[2]) do str_ = str_ .. s(s,node) .. ", " end
@@ -1359,7 +1371,7 @@ return {
                 local args = ""
                 for _, n in ipairs(ast.args[2]) do args = args .. s(s,n) .. ", " end
                 if #args > 0 then args = args:sub(1,#args-2) end
-                return "( " .. s(s,ast.args[1]) .. "(" .. args .. ") )"
+                return "( " .. s(s,ast.args[1]) .. "( " .. args .. " ))"
             end
         end
         return str(ast)
