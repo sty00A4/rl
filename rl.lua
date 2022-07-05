@@ -562,6 +562,16 @@ local function parse(tokens)
             end
             return Node("while",{ condNode, body },PositionRange(start, tok.pr.stop:copy()))
         end
+        if tok == Token("kw","inc") then
+            advance()
+            local nameNode, err = index() if err then return nil, err end
+            return Node("inc",{ nameNode },PositionRange(start, tok.pr.stop:copy()))
+        end
+        if tok == Token("kw","dec") then
+            advance()
+            local nameNode, err = index() if err then return nil, err end
+            return Node("dec",{ nameNode },PositionRange(start, tok.pr.stop:copy()))
+        end
         local node, err = expr() if err then return nil, err end
         if tok == Token("kw","assign") then
             if node.name ~= "name" and node.name ~= "index" then
@@ -1169,6 +1179,28 @@ local function interpret(ast)
                 return value
             end
             return nil, false, Error("value error", "expected Func or LuaFunc", node.args[1].pr:copy())
+        end,
+        inc = function(node)
+            local addr, _, err = nodes.addr(node) if err then return nil, false, err end
+            if MEMORY[addr.value] then
+                if type(MEMORY[addr.value]) == "Number" then
+                    MEMORY[addr.value].value = MEMORY[addr.value].value + 1
+                    return MEMORY[addr.value]
+                end
+                return nil, false, Error("value error", "cannot increment value of type "..type(MEMORY[addr.value]),node.pr:copy())
+            end
+            return nil, false, Error("name error", "address "..tostring(addr.value).." is not in memory", node.args[1].pr.copy())
+        end,
+        dec = function(node)
+            local addr, _, err = nodes.addr(node) if err then return nil, false, err end
+            if MEMORY[addr.value] then
+                if type(MEMORY[addr.value]) == "Number" then
+                    MEMORY[addr.value].value = MEMORY[addr.value].value - 1
+                    return MEMORY[addr.value]
+                end
+                return nil, false, Error("value error", "cannot decrement value of type "..type(MEMORY[addr.value]),node.pr:copy())
+            end
+            return nil, false, Error("name error", "address "..tostring(addr.value).." is not in memory", node.args[1].pr.copy())
         end,
     }
     visit = function(node)
