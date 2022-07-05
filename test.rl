@@ -1,5 +1,4 @@
 i is 0
-while i < 10000
-    print(i)
+while i < 200000
     inc i
 end
