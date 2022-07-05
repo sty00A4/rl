@@ -529,7 +529,7 @@ local function parse(tokens)
             if tok == Token("into") then
                 advance()
                 type_, err = atom() if err then return nil, err end
-                if type_.name ~= "type" then return nil, Error("syntax error", "expected type, got "..str(type_.name), type_.pr:copy()) end
+                if type_.name ~= "type" and type_.name ~= "name" then return nil, Error("syntax error", "expected type, got "..str(type_.name), type_.pr:copy()) end
             end
             if tok == Token("nl") then
                 while tok == Token("nl") do advance() end
@@ -611,7 +611,7 @@ local function parse(tokens)
                 if tok == Token("rep") then
                     advance()
                     type_, err = atom() if err then return nil, err end
-                    if type_.name ~= "type" then return nil, Error("syntax error", "expected type", type_.pr:copy()) end
+                    if type_.name ~= "type" and type_.name ~= "name" then return nil, Error("syntax error", "expected type", type_.pr:copy()) end
                 end
                 push(vars, { var, type_ })
                 if tok ~= Token("nl") and tok ~= Token("kw","end") then
@@ -800,7 +800,7 @@ StructDef = function(name, vars)
             { name = name, vars = vars, copy = function(s) return StructDef(s.name, copy(s.vars)) end },
             { __name = "StructDef", __tostring = function(s)
                 local subs = ""
-                for k, _ in pairs(s.vars) do subs = subs..k.."," end
+                for _, v in pairs(s.vars) do subs = subs..v[1].."," end
                 subs = subs:sub(1,#subs-1)
                 return "<structDef-"..s.name.."("..subs..")>"
             end }
@@ -954,6 +954,7 @@ end
 
 local function interpret(ast)
     local scopes = stdScope()
+    local nodes, visit
     local function eq(v1, v2)
         if not v1 or not v2 then return Bool(false) end
         if type(v1) == "List" and type(v2) == "List" then
@@ -969,7 +970,14 @@ local function interpret(ast)
         if v1.value and v2.value then return Bool(v1.value == v2.value) end
         return Bool(false)
     end
-    local nodes, visit nodes = {
+    local function typeOfType(type_)
+        if words.type[type_.value] then return words.type[type_.value] end
+        if type(type_) == "Struct" then return type_.name end
+        if contains(words.type, type(type_)) then return type(type_) end
+        local value, err = scopes:get(type_.name, MEMORY) if err then return end
+        if type(value) == "StructDef" then return value.name end
+    end
+    nodes = {
         notImplemented = function(node) return nil, false, Error("not implemented", node.name, node.pr:copy()) end,
         number = function(node) return Number(node.args[1].value) end,
         bool = function(node) return Bool(node.args[1].value == words.bool[1]) end,
@@ -1016,14 +1024,14 @@ local function interpret(ast)
             type_, _, err = visit(node.args[3]) if err then return nil, false, err end
             if type(type_) ~= "Type" then return nil, false, Error("cast error", "expected Type", node.args[2].pr:copy()) end
             local castValue
-            if words.type[type_.value] == type(value) then return value end
+            if typeOfType(type_) == type(value) then return value end
             if type_.value == "type" then castValue = Type(type(value)) end
             if type_.value == "null" then castValue = Null() end
             if type_.value == "number" then castValue = value:toNumber() end
             if type_.value == "bool" then castValue = value:toBool() end
             if type_.value == "string" then castValue = value:toString() end
             if type_.value == "list" then castValue = value:toList() end
-            if not castValue then return nil, false, Error("cast error", "cannot cast "..type(value).." to "..words.type[type_.value], node.pr:copy()) end
+            if not castValue then return nil, false, Error("cast error", "cannot cast "..type(value).." to "..typeOfType(type_), node.pr:copy()) end
             return castValue
         end,
         index = function(node)
@@ -1298,8 +1306,8 @@ local function interpret(ast)
                 value, _, err = visit(func.body) if err then return nil, false, err end
                 scopes = mainScopes
                 if func.returnType then
-                    if type(value) ~= words.type[func.returnType.value] then
-                        return nil, false, Error("func error", "returned value isn't "..str(words.type[func.returnType.value])..", got "..type(value), node.pr:copy())
+                    if type(value) ~= typeOfType(func.returnType) then
+                        return nil, false, Error("func error", "returned value isn't "..str(typeOfType(func.returnType))..", got "..type(value), node.pr:copy())
                     end
                 end
                 return value
@@ -1320,8 +1328,8 @@ local function interpret(ast)
                 end
                 value, _, err = func.func(scopes, node, args) if err then return nil, false, err end
                 scopes = mainScopes
-                if func.returnType then if type(value) ~= words.type[func.returnType.value] then
-                        return nil, false, Error("func error", "returned value isn't "..str(words.type[func.returnType.value])..", got "..type(value), node.pr:copy())
+                if func.returnType then if type(value) ~= typeOfType(func.returnType) then
+                        return nil, false, Error("func error", "returned value isn't "..str(typeOfType(func.returnType))..", got "..type(value), node.pr:copy())
                 end end
                 return value
             end
@@ -1333,8 +1341,8 @@ local function interpret(ast)
                 local varAddrs = {}
                 for i, varDef in ipairs(func.vars) do
                     if not args[i] then return nil, false, Error("func error", "too few arguments", node.pr:copy()) end
-                    if varDef[2] then if type(args[i]) ~= words.type[varDef[2].value] then
-                        return nil, false, Error("value error", "expected type "..words.type[varDef[2].value].." for '"..varDef[1].."', got "..type(args[i]),
+                    if varDef[2] then if typeOfType(args[i]) ~= typeOfType(varDef[2]) then
+                        return nil, false, Error("value error", "expected type "..typeOfType(varDef[2]).." for '"..varDef[1].."', got "..type(args[i]),
                                 node.pr:copy())
                     end end
                     local addr addr, err = MEMORY:new() if err then return nil, false, err end
