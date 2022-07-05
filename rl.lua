@@ -110,7 +110,8 @@ local words = {
     kw = {
         assign = "is", cast = "as", inc = "inc", dec = "dec", with = "with", to = "to", contain = "in",
         ["return"] = "return", ["and"] = "and", ["or"] = "or", ["xor"] = "xor", ["not"] = "not",
-        ["end"] = "end", ["if"] = "if", ["else"] = "else", ["elif"] = "elif", func = "func"
+        ["end"] = "end", ["if"] = "if", ["else"] = "else", ["elif"] = "elif", ["while"] = "while",
+        func = "func"
     },
     bool = { "true", "false" },
     null = "null",
@@ -547,6 +548,19 @@ local function parse(tokens)
             local node, err = expr() if err then return nil, err end
             stop = tok.pr.stop:copy()
             return Node("return", { node }, PositionRange(start, stop))
+        end
+        if tok == Token("kw","while") then
+            advance()
+            local condNode, body, err
+            condNode, err = expr() if err then return nil, err end
+            if tok == Token("nl") then
+                advance()
+                body, err = statements({ Token("kw","end") }) if err then return nil, err end
+                advance()
+            else
+                body, err = statement() if err then return nil, err end
+            end
+            return Node("while",{ condNode, body },PositionRange(start, tok.pr.stop:copy()))
         end
         local node, err = expr() if err then return nil, err end
         if tok == Token("kw","assign") then
@@ -994,22 +1008,22 @@ local function interpret(ast)
             if opTok.type == "ne" then return Bool(not eq(left, right).value) end
             if opTok.type == "lt" then
                 if type(left) == "Number" and type(right) == "Number" then
-                    return Number(left.value < right.value)
+                    return Bool(left.value < right.value)
                 end
             end
             if opTok.type == "gt" then
                 if type(left) == "Number" and type(right) == "Number" then
-                    return Number(left.value > right.value)
+                    return Bool(left.value > right.value)
                 end
             end
             if opTok.type == "le" then
                 if type(left) == "Number" and type(right) == "Number" then
-                    return Number(left.value <= right.value)
+                    return Bool(left.value <= right.value)
                 end
             end
             if opTok.type == "ge" then
                 if type(left) == "Number" and type(right) == "Number" then
-                    return Number(left.value >= right.value)
+                    return Bool(left.value >= right.value)
                 end
             end
             if opTok.type == "kw" then
@@ -1081,6 +1095,21 @@ local function interpret(ast)
             end
             if idx then return visit(bodyNodes[idx])
             else if elseNode then return visit(elseNode) end end
+            return Null()
+        end,
+        ["while"] = function(node)
+            local condNode, bodyNode, returning, value = node.args[1], node.args[2]
+            local cond, _, err = visit(condNode) if err then return nil, false, err end
+            if not cond.toBool then return nil, false, Error("value error", "expected Bool", condNode.pr:copy()) end
+            while cond.value do
+                value, returning, err = visit(bodyNode) if err then return nil, false, err end
+                if returning then
+                    if returning == "break" then break end
+                    return value
+                end
+                cond, _, err = visit(condNode) if err then return nil, false, err end
+                if not cond.toBool then return nil, false, Error("value error", "expected Bool", condNode.pr:copy()) end
+            end
             return Null()
         end,
         func = function(node)
