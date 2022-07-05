@@ -153,6 +153,7 @@ local function PositionRange(start, stop)
             { __name = "PositionRange" }
     )
 end
+--TODO: better errors
 local function Error(type_, details, pr)
     if pr then pr = pr:copy() end
     return setmetatable(
@@ -1009,6 +1010,7 @@ local function interpret(ast)
             local value, _, err = visit(node.args[1]) if err then return value, true, err end
             return value, true
         end,
+        --TODO: assign for index (if is index, get addr and than set addr of memory)
         assign = function(node)
             local value, _, err = visit(node.args[2]) if err then return nil, false, err end
             local addr addr, err = scopes:set(node.args[1], value, MEMORY) if err then return nil, false, err end
@@ -1394,8 +1396,6 @@ local function interpret(ast)
     return value
 end
 
---TODO: assign for index (if is index, get addr and than set addr of memory)
---TODO: better errors
 --TODO: garbage collector
 --TODO: check if all errors work
 
