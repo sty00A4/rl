@@ -111,7 +111,7 @@ local words = {
         assign = "is", cast = "as", inc = "inc", dec = "dec", with = "with", to = "to", contain = "in",
         ["return"] = "return", ["and"] = "and", ["or"] = "or", ["xor"] = "xor", ["not"] = "not",
         ["end"] = "end", ["if"] = "if", ["else"] = "else", ["elif"] = "elif", ["while"] = "while",
-        func = "func"
+        ["for"] = "for", of = "of", func = "func"
     },
     bool = { "true", "false" },
     null = "null",
@@ -562,6 +562,26 @@ local function parse(tokens)
             end
             return Node("while",{ condNode, body },PositionRange(start, tok.pr.stop:copy()))
         end
+        if tok == Token("kw","for") then
+            advance()
+            local nameNode, iterator, body, err
+            nameNode, err = expr() if err then return nil, err end
+            if tok == Token("kw","of") then
+                advance()
+                iterator, err = expr() if err then return nil, err end
+            end
+            local stop
+            if tok == Token("nl") then
+                body, err = statements({ Token("kw","end") }) if err then return nil, err end
+                stop = tok.pr.stop:copy()
+                advance()
+            else
+                body, err = statement() if err then return nil, err end
+                stop = tok.pr.stop:copy()
+            end
+            if iterator then return Node("forOf",{ nameNode, iterator, body }, PositionRange(start, stop))
+            else return Node("for",{ nameNode, body }, PositionRange(start, stop)) end
+        end
         if tok == Token("kw","inc") then
             advance()
             local nameNode, err = index() if err then return nil, err end
@@ -591,6 +611,7 @@ local function parse(tokens)
             end
         end
         errStr=errStr:sub(1,#errStr-1)
+        if errStr == "" then errStr = "end of line" end
         local body = {}
         while true do
             while tok == Token("nl") do advance() end
@@ -601,7 +622,7 @@ local function parse(tokens)
             stop = tok.pr.stop:copy()
             push(body, node)
             if stopTokens then if contains(stopTokens, tok) then break end else if tok == Token("eof") then break end end
-            if tok ~= Token("nl") then return nil, Error("syntax error", "expected "..errStr, tok.pr:copy()) end
+            if tok ~= Token("nl") then return nil, Error("syntax error", "expected new line", tok.pr:copy()) end
         end
         if #body > 0 then
             if #body == 1 then return body[1] end
@@ -1121,6 +1142,57 @@ local function interpret(ast)
                 if not cond.toBool then return nil, false, Error("value error", "expected Bool", condNode.pr:copy()) end
             end
             return Null()
+        end,
+        ["for"] = function(node)
+            local rangeNode, bodyNode, returning, value = node.args[1], node.args[2]
+            local range, _, err = visit(rangeNode) if err then return nil, false, err end
+            if type(range) ~= "Range" then return nil, false, Error("value error", "expected Range", rangeNode.pr:copy()) end
+            local dir = 1 if range.start > range.stop then dir = -1 end
+            for i = range.start, range.stop, dir do
+                value, returning, err = visit(bodyNode) if err then return nil, false, err end
+                if returning then
+                    if returning == "break" then break end
+                    return value
+                end
+            end
+            return Null()
+        end,
+        ["forOf"] = function(node)
+            local nameNode, iterNode, bodyNode, returning, value = node.args[1], node.args[2], node.args[3]
+            if nameNode.name ~= "name" then return nil, false, Error("iteration error", "expected name", nameNode.pr:copy()) end
+            local iterator, _, err = visit(iterNode) if err then return nil, false, err end
+            if type(iterator) == "Range" then
+                local dir = 1 if iterator.start > iterator.stop then dir = -1 end
+                for i = iterator.start, iterator.stop, dir do
+                    scopes:new(Scope())
+                    scopes:set(nameNode, Number(i), MEMORY)
+                    value, returning, err = visit(bodyNode) if err then return nil, false, err end
+                    scopes:drop()
+                    if returning then
+                        if returning == "break" then break end
+                        return value
+                    end
+                end
+                return Null()
+            end
+            if type(iterator) ~= "List" then
+                if not iterator.toList then return nil, false, Error("value error", "cannot cast "..type(iterator).." to List", iterNode.pr:copy()) end
+                iterator = iterator:toList()
+            end
+            if type(iterator) == "List" then
+                for i, x in ipairs(iterator.values) do
+                    scopes:new(Scope())
+                    scopes:set(nameNode, x:copy(), MEMORY)
+                    value, returning, err = visit(bodyNode) if err then return nil, false, err end
+                    scopes:drop()
+                    if returning then
+                        if returning == "break" then break end
+                        return value
+                    end
+                end
+                return Null()
+            end
+            return nil, false, Error("iteration error", "cannot iterate with "..type(iterator), iterNode.pr:copy())
         end,
         func = function(node)
             local type_, err if node.args[4] then

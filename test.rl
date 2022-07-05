@@ -1,4 +1,3 @@
-i is 0
-while i < 100000
-    inc i
+for x of { 5, 1, 2 }
+    print(x)
 end

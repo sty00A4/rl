@@ -1,6 +1,6 @@
 local erl = require "rl"
 local tokens, ast, value, vars, returning, err
-local detail = true
+local detail = false
 local zero = os.clock()
 local text = io.open("test.rl", "r"):read("*a")
 tokens, err = erl.lex("test.rl", text) if err then print(err) return end
