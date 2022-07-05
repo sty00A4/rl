@@ -1,2 +1,2 @@
-# ERL
-easily readable language
+# RL
+readable language
