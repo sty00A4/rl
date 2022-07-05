@@ -625,9 +625,6 @@ local function parse(tokens)
         end
         local node, err = expr() if err then return nil, err end
         if tok == Token("kw","assign") then
-            if node.name ~= "name" and node.name ~= "index" then
-                return nil, Error("syntax error", "expected name or index, got "..str(node.name), node.pr:copy())
-            end
             advance()
             local value value, err = expr() if err then return nil, err end
             return Node("assign",{node,value},PositionRange(node.pr.start:copy(),value.pr.stop:copy()))
@@ -948,7 +945,6 @@ local function stdScope()
     scopes.scopes[1].vars["debugScopes"] = 3
     scopes.scopes[1].vars["fromAddr"] = 4
     scopes.scopes[1].vars["setAddr"] = 5
-    scopes.scopes[1].vars["addr"] = 6
     return scopes
 end
 
@@ -1397,6 +1393,11 @@ local function interpret(ast)
     if not getmetatable(value) then return nil, false, Error("dev error", "value returned is not a metatable") end
     return value
 end
+
+--TODO: assign for index (if is index, get addr and than set addr of memory)
+--TODO: better errors
+--TODO: garbage collector
+--TODO: check if all errors work
 
 return {
     lex = lex, parse = parse, interpret = interpret,
