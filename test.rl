@@ -1,13 +1,7 @@
-print("break example")
-x is 1
-while true
-    inc x
-    if (x = 10) break end
+struct Person
+    name : String
+    age  : Number
 end
-print(x)
-print("skip example")
-for x of 1 to 20
-    if (x % 2 != 0) skip end
-    if (x = 20) break end
-    print(x)
-end
+person is Person("sty00a4", 17)
+debugMem()
+return person.name + " is " + (person.age as String) + " ages old."

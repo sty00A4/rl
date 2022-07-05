@@ -111,7 +111,8 @@ local words = {
         assign = "is", cast = "as", inc = "inc", dec = "dec", with = "with", to = "to", contain = "in",
         ["return"] = "return", ["and"] = "and", ["or"] = "or", ["xor"] = "xor", ["not"] = "not",
         ["end"] = "end", ["if"] = "if", ["else"] = "else", ["elif"] = "elif", ["while"] = "while",
-        ["for"] = "for", of = "of", func = "func", ["break"] = "break", skip = "skip"
+        ["for"] = "for", of = "of", func = "func", ["break"] = "break", skip = "skip",
+        struct = "struct",
     },
     bool = { "true", "false" },
     null = "null",
@@ -594,6 +595,34 @@ local function parse(tokens)
         end
         if tok == Token("kw","break") then local tok_=tok:copy() advance() return Node("break",{ tok_:copy() },tok_.pr:copy()) end
         if tok == Token("kw","skip") then local tok_=tok:copy() advance() return Node("skip",{ tok_:copy() },tok_.pr:copy()) end
+        if tok == Token("kw","struct") then
+            advance()
+            local vars, nameNode, var, type_, err = {}
+            nameNode, err = atom() if err then return nil, err end
+            if nameNode.name ~= "name" then return nil, Error("syntax error", "expected name", nameNode.pr:copy()) end
+            if tok ~= Token("nl") then return nil, Error("syntax error", "expected new line", tok.pr:copy()) end
+            advance()
+            local stop = tok.pr.stop:copy()
+            while true do
+                if tok == Token("kw","end") then break end
+                if tok == Token("eof") then return nil, Error("syntax error", "expected name", tok.pr:copy()) end
+                var, err = atom() if err then return nil, err end
+                if var.name ~= "name" then return nil, Error("syntax error", "expected name", var.pr:copy()) end
+                if tok == Token("rep") then
+                    advance()
+                    type_, err = atom() if err then return nil, err end
+                    if type_.name ~= "type" then return nil, Error("syntax error", "expected type", type_.pr:copy()) end
+                end
+                push(vars, { var, type_ })
+                if tok ~= Token("nl") and tok ~= Token("kw","end") then
+                    return nil, Error("syntax error", "expected new line or '"..words.kw["end"].."'", tok.pr:copy())
+                end
+                advance()
+            end
+            stop = tok.pr.stop:copy()
+            advance()
+            return Node("struct",{ nameNode, vars },PositionRange(start, stop))
+        end
         local node, err = expr() if err then return nil, err end
         if tok == Token("kw","assign") then
             if node.name ~= "name" and node.name ~= "index" then
@@ -640,7 +669,7 @@ end
 
 ---Interpret
 -- Values
-local Number, Bool, String, Type, Null, List, Range, Func, LuaFunc
+local Number, Bool, String, Type, Null, List, Range, Func, LuaFunc, StructDef, Struct
 Number = function(number)
     if number == math.floor(number) then number = math.floor(number) end
     return setmetatable(
@@ -682,7 +711,7 @@ String = function(str_)
                   return List(list)
               end,
             },
-            { __name = "String", __tostring = function(s) return str(s.value) end }
+            { __name = "String", __tostring = function(s) return tostring(s.value) end }
     )
 end
 Type = function(type_)
@@ -723,7 +752,7 @@ end
 Range = function(start, stop)
     return setmetatable(
             { start = start, stop = stop, copy = function(s) return Range(s.start, s.stop) end,
-              toString = function(s) return String(tostring(s)) end,
+              toString = function(s) return String(str(s)) end,
               toBool = function(s) return Bool(true) end,
               toList = function(s)
                   local list = {}
@@ -739,7 +768,7 @@ end
 Func = function(vars, body, returnType)
     return setmetatable(
             { vars = vars, body = body, returnType = returnType, copy = function(s) return Func(copy(s.vars), s.body:copy()) end,
-              toString = function(s) return String(tostring(s)) end,
+              toString = function(s) return String(str(s)) end,
               toBool = function(s) return Bool(true) end,
             },
             { __name = "Func", __tostring = function(s)
@@ -754,7 +783,7 @@ end
 LuaFunc = function(vars, func, returnType)
     return setmetatable(
             { vars = vars, func = func, returnType = returnType, copy = function(s) return LuaFunc(copy(s.vars), s.func) end,
-              toString = function(s) return String(tostring(s)) end,
+              toString = function(s) return String(str(s)) end,
               toBool = function(s) return Bool(true) end,
             },
             { __name = "LuaFunc", __tostring = function(s)
@@ -763,6 +792,42 @@ LuaFunc = function(vars, func, returnType)
                 if #s.vars > 0 then str_ = str_:sub(1,#str_-2) .. ")" else str_ = str_ .. ")" end
                 if s.returnType then str_ = str_ .. "->" .. s.returnType.value end
                 return str_ .. ">"
+            end }
+    )
+end
+StructDef = function(name, vars)
+    return setmetatable(
+            { name = name, vars = vars, copy = function(s) return StructDef(s.name, copy(s.vars)) end },
+            { __name = "StructDef", __tostring = function(s)
+                local subs = ""
+                for k, _ in pairs(s.vars) do subs = subs..k.."," end
+                subs = subs:sub(1,#subs-1)
+                return "<structDef-"..s.name.."("..subs..")>"
+            end }
+    )
+end
+Struct = function(structName, varAddrs)
+    return setmetatable(
+            { name = structName, varAddrs = varAddrs,
+              copy = function(s) return Struct(s.name, copy(s.varAddr)) end,
+              setAddr = function(s, node, name, addr, memory)
+                  local value, err = s:get(name) if err then return nil, err end
+                  return nil, Error("name error", "name '"..name.."' cannot be found", node.pr:copy())
+              end,
+              getAddr = function(s, node, name)
+                  local scope
+                  for _, v in ipairs(s.scopes) do if v:get(name) then scope=v end end
+                  if scope then
+                      return scope.vars[name]
+                  end
+                  return nil, Error("name error", "name '"..name.."' cannot be found", node.pr:copy())
+              end,
+            },
+            { __name = "Struct", __tostring = function(s)
+                local subs = ""
+                for k, addr in pairs(s.varAddrs) do subs = subs..k.."="..tostring(addr).."," end
+                subs = subs:sub(1,#subs-1)
+                return "<struct-"..s.name.."("..subs..")>"
             end }
     )
 end
@@ -783,8 +848,8 @@ local MEMORY MEMORY = Memory({
     end, Type("null")),
     -- debugMem
     LuaFunc({ }, function()
-        print("- memory -")
-        for i = 7, #MEMORY do print(i, str(MEMORY[i])) end
+        print("\n- memory -")
+        for i = 6, #MEMORY do print(i, str(MEMORY[i],true)) end
         print()
         return Null()
     end, Type("null")),
@@ -833,7 +898,7 @@ local function Scopes(scopes)
                 local scope
                 for _, v in ipairs(s.scopes) do if v:get(name) then scope=v end end
                 if scope then
-                    if not memory[addr] then return nil, Error("name error", "name address "..tostring(addr).." doesn't exist in memory", node.pr:copy()) end
+                    if not memory[addr] then return nil, Error("name error", "name address "..str(addr).." doesn't exist in memory", node.pr:copy()) end
                     scope.vars[name] = addr
                     return
                 end
@@ -907,9 +972,7 @@ local function interpret(ast)
     local nodes, visit nodes = {
         notImplemented = function(node) return nil, false, Error("not implemented", node.name, node.pr:copy()) end,
         number = function(node) return Number(node.args[1].value) end,
-        bool = function(node)
-            return Bool(node.args[1].value == words.bool[1])
-        end,
+        bool = function(node) return Bool(node.args[1].value == words.bool[1]) end,
         string = function(node) return String(node.args[1].value) end,
         type = function(node) return Type(node.args[1].value) end,
         null = function() return Null() end,
@@ -964,10 +1027,14 @@ local function interpret(ast)
             return castValue
         end,
         index = function(node)
-            local left, right, err
-            left, _, err = visit(node.args[2]) if err then return nil, false, err end
-            right, _, err = visit(node.args[3]) if err then return nil, false, err end
-            return nil, false, Error("index error", "cannot index "..type(left).." with "..type(right), node.pr:copy())
+            if node.args[3].name ~= "name" then return nil, false, Error("index error", "expected name", node.args[3].pr:copy()) end
+            local head, index, addr, err
+            head, _, err = visit(node.args[2]) if err then return nil, false, err end
+            index = node.args[3].args[1].value
+            addr = head.varAddrs[index]
+            if addr == nil then return nil, false, Error("index error", "index '"..index.."' is not in '"..head.name.."'", node.pr:copy()) end
+            if not MEMORY[addr] then return nil, false, Error("memory error", "address "..str(addr).." doesn't exists", node.pr:copy()) end
+            return MEMORY[addr]
         end,
         idxList = function(node)
             local list, index, err
@@ -996,9 +1063,9 @@ local function interpret(ast)
         binOp = function(node)
             local opTok = node.args[1]
             local left, right, err
+            if opTok.type == "index" then return nodes.index(node) end
             left, _, err = visit(node.args[2]) if err then return nil, false, err end
             right, _, err = visit(node.args[3]) if err then return nil, false, err end
-            if opTok.type == "index" then return nodes.index(node) end
             if opTok.type == "add" then
                 if type(left) == "Number" and type(right) == "Number" then
                     return Number(left.value + right.value)
@@ -1187,7 +1254,7 @@ local function interpret(ast)
             end
             if type(iterator) == "List" then
                 for i, x in ipairs(iterator.values) do
-                    scopes:new(Scope())
+                    scopes:new(Scope({}, "iterator"))
                     scopes:set(nameNode, x:copy(), MEMORY)
                     value, returning, err = visit(bodyNode, "forOf", true, true) if err then return nil, false, err end
                     scopes:drop()
@@ -1225,8 +1292,8 @@ local function interpret(ast)
                 scopes = stdScope()
                 scopes:new(Scope({}, "func"))
                 for i, var in ipairs(func.vars) do
-                    if not args[i] then return nil, false, Error("func error", "too few arguements", node.pr:copy()) end
-                    scopes:set(var, args[i], MEMORY)
+                    if not args[i] then return nil, false, Error("func error", "too few arguments", node.pr:copy()) end
+                    _, err = scopes:set(var, args[i], MEMORY) if err then return nil, false, err end
                 end
                 value, _, err = visit(func.body) if err then return nil, false, err end
                 scopes = mainScopes
@@ -1248,8 +1315,8 @@ local function interpret(ast)
                 scopes = stdScope()
                 scopes:new(Scope({}, "lua-func"))
                 for i, var in ipairs(func.vars) do
-                    if not args[i] then return nil, false, Error("func error", "too few arguements", node.pr:copy()) end
-                    scopes:set(var, args[i], MEMORY)
+                    if not args[i] then return nil, false, Error("func error", "too few arguments", node.pr:copy()) end
+                    _, err = scopes:set(var, args[i], MEMORY) if err then return nil, false, err end
                 end
                 value, _, err = func.func(scopes, node, args) if err then return nil, false, err end
                 scopes = mainScopes
@@ -1258,7 +1325,25 @@ local function interpret(ast)
                 end end
                 return value
             end
-            return nil, false, Error("value error", "expected Func or LuaFunc", node.args[1].pr:copy())
+            if type(func) == "StructDef" then
+                for _, arg in ipairs(node.args[2]) do
+                    local value value, __, err = visit(arg) if err then return nil, false, err end
+                    push(args, value)
+                end
+                local varAddrs = {}
+                for i, varDef in ipairs(func.vars) do
+                    if not args[i] then return nil, false, Error("func error", "too few arguments", node.pr:copy()) end
+                    if varDef[2] then if type(args[i]) ~= words.type[varDef[2].value] then
+                        return nil, false, Error("value error", "expected type "..words.type[varDef[2].value].." for '"..varDef[1].."', got "..type(args[i]),
+                                node.pr:copy())
+                    end end
+                    local addr addr, err = MEMORY:new() if err then return nil, false, err end
+                    MEMORY[addr] = args[i]
+                    varAddrs[varDef[1]] = addr
+                end
+                return Struct(func.name, varAddrs)
+            end
+            return nil, false, Error("value error", "expected Func/LuaFunc/StructDef", node.args[1].pr:copy())
         end,
         inc = function(node)
             local addr, _, err = nodes.addr(node) if err then return nil, false, err end
@@ -1269,7 +1354,7 @@ local function interpret(ast)
                 end
                 return nil, false, Error("value error", "cannot increment value of type "..type(MEMORY[addr.value]),node.pr:copy())
             end
-            return nil, false, Error("name error", "address "..tostring(addr.value).." is not in memory", node.args[1].pr.copy())
+            return nil, false, Error("name error", "address "..str(addr.value).." is not in memory", node.args[1].pr.copy())
         end,
         dec = function(node)
             local addr, _, err = nodes.addr(node) if err then return nil, false, err end
@@ -1280,8 +1365,19 @@ local function interpret(ast)
                 end
                 return nil, false, Error("value error", "cannot decrement value of type "..type(MEMORY[addr.value]),node.pr:copy())
             end
-            return nil, false, Error("name error", "address "..tostring(addr.value).." is not in memory", node.args[1].pr.copy())
+            return nil, false, Error("name error", "address "..str(addr.value).." is not in memory", node.args[1].pr.copy())
         end,
+        struct = function(node)
+            local nameNode, nodeVars, err = node.args[1], node.args[2]
+            local name, vars = nameNode.args[1].value, {}
+            for _, varDef in ipairs(nodeVars) do
+                local var = varDef[1]
+                local type_ type_, _, err = visit(varDef[2]) if err then return nil, false, err end
+                push(vars, { var.args[1].value, type_ })
+            end
+            scopes:set(name,StructDef(name, vars),MEMORY)
+            return scopes:get(name, MEMORY)
+        end
     }
     visit = function(node, ...)
         if not node then error("no node given", 2) end
@@ -1366,6 +1462,14 @@ return {
                 if #ast.args[2] > 0 then str_ = str_:sub(1,#str_-2) .. ") " else str_ = str_ .. ") " end
                 if ast.args[4] then str_ = str_ .. "-> ".. s(s,ast.args[4]) .. " " end
                 return str_ .. ": " .. s(s,ast.args[3]) .. "end)"
+            end
+            if ast.name == "struct" then
+                local str_ = "(struct " .. s(s,ast.args[1]) .. " ("
+                for _, node in ipairs(ast.args[2]) do
+                    if node[2] then str_ = str_ .. s(s,node[1]) .. " : " .. s(s,node[2]) .. ", "
+                    else str_ = str_ .. s(s,node[1]) .. ", " end
+                end
+                return str_:sub(1,#str_-2) .. ") end)"
             end
             if ast.name == "call" then
                 local args = ""
