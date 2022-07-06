@@ -3,7 +3,7 @@ string.letters = { "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "
                    "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "_" }
 string.digits = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0" }
 table.copy = function(t)
-    if type(t) ~= "table" then return t end
+    if TYPE(t) ~= "table" then return t end
     local newT = {}
     for k, v in pairs(t) do newT[k] = table.copy(v) end
     return newT
@@ -821,7 +821,7 @@ Struct = function(structName, varAddrs)
                   return nil, Error("name error", "name '"..name.."' cannot be found", node.pr:copy())
               end,
             },
-            { __name = "Struct", __tostring = function(s)
+            { __name = "Struct", __tostrings = function(s)
                 local subs = ""
                 for k, addr in pairs(s.varAddrs) do subs = subs..k.."="..tostring(addr).."," end
                 subs = subs:sub(1,#subs-1)
@@ -932,7 +932,11 @@ local function Scopes(scopes)
                 scope:set(name, addr)
                 memory[addr] = value
                 return addr
-            end, new = function(s, scope) s.scopes[#s.scopes+1] = scope end, drop = function(s) pop(s.scopes) end },
+            end,
+              new = function(s, scope) s.scopes[#s.scopes+1] = scope end,
+              --TODO: garbage collector
+              drop = function(s) pop(s.scopes) end
+            },
             { __name = "Scopes", __tostring = function(s)
                 return "Scopes("..str(s.scopes)..")"
             end }
@@ -1002,6 +1006,9 @@ local function interpret(ast)
             return value
         end,
         addr = function(node)
+            if node.args[1].name == "binOp" and node.args[1].args[1] == Token("index") then
+                return nodes.indexAddr(node.args[1])
+            end
             local name = node.args[1]
             local addr, err = scopes:getAddr(node, name.args[1].value) if err then return nil, false, err end
             return Number(addr)
@@ -1010,11 +1017,21 @@ local function interpret(ast)
             local value, _, err = visit(node.args[1]) if err then return value, true, err end
             return value, true
         end,
-        --TODO: assign for index (if is index, get addr and than set addr of memory)
         assign = function(node)
             local value, _, err = visit(node.args[2]) if err then return nil, false, err end
-            local addr addr, err = scopes:set(node.args[1], value, MEMORY) if err then return nil, false, err end
-            return Null()
+            if node.args[1].name == "binOp" and node.args[1].args[1] == Token("index") then
+                local addr addr, _, err = nodes.indexAddr(node.args[1]) if err then return nil, false, err end
+                addr = addr.value
+                if typeOfType(MEMORY[addr]) ~= typeOfType(value) then
+                    return nil, false, Error("value error", "expected "..typeOfType(MEMORY[addr])..", got "..typeOfType(value), node.args[2].pr:copy())
+                end
+                MEMORY[addr] = value:copy()
+                return value
+            elseif node.args[1].name == "name" then
+                local addr addr, err = scopes:set(node.args[1], value, MEMORY) if err then return nil, false, err end
+                return value
+            end
+            return nil, false, Error("assign error", "expected name or index", node.args[1].pr:copy())
         end,
         cast = function(node)
             local value, type_, err
@@ -1035,12 +1052,25 @@ local function interpret(ast)
         index = function(node)
             if node.args[3].name ~= "name" then return nil, false, Error("index error", "expected name", node.args[3].pr:copy()) end
             local head, index, addr, err
+            --TODO: weird varAddrs not in head bug
             head, _, err = visit(node.args[2]) if err then return nil, false, err end
+            if type(head) ~= "Struct" then return nil, false, Error("index error", "cannot index "..type(head), node.args[2].pr:copy()) end
             index = node.args[3].args[1].value
+            print(str(head), index)
             addr = head.varAddrs[index]
             if addr == nil then return nil, false, Error("index error", "index '"..index.."' is not in '"..head.name.."'", node.pr:copy()) end
             if not MEMORY[addr] then return nil, false, Error("memory error", "address "..str(addr).." doesn't exists", node.pr:copy()) end
             return MEMORY[addr]
+        end,
+        indexAddr = function(node)
+            if node.args[3].name ~= "name" then return nil, false, Error("index error", "expected name", node.args[3].pr:copy()) end
+            local head, index, addr, err
+            head, _, err = visit(node.args[2]) if err then return nil, false, err end
+            if type(head) ~= "Struct" then return nil, false, Error("index error", "cannot index "..type(head), node.args[2].pr:copy()) end
+            index = node.args[3].args[1].value
+            addr = head.varAddrs[index]
+            if addr == nil then return nil, false, Error("index error", "index '"..index.."' is not in '"..head.name.."'", node.pr:copy()) end
+            return Number(addr)
         end,
         idxList = function(node)
             local list, index, err
@@ -1347,6 +1377,7 @@ local function interpret(ast)
                     MEMORY[addr] = args[i]
                     varAddrs[varDef[1]] = addr
                 end
+                print(str(varAddrs))
                 return Struct(func.name, varAddrs)
             end
             return nil, false, Error("value error", "expected Func/LuaFunc/StructDef", node.args[1].pr:copy())
@@ -1396,7 +1427,6 @@ local function interpret(ast)
     return value
 end
 
---TODO: garbage collector
 --TODO: check if all errors work
 
 return {
