@@ -343,7 +343,7 @@ local function parse(tokens)
     local function advance() idx=idx+1 update() end
     advance()
     local statements, statement, expr, typecast, logic, comp, contain, range, arith, term, factor, power, call, safe,
-    idxList, addr, index, atom
+    idxList, addr, index, atom, ifExpr, whileExpr, forExpr, func, struct
     local function binOp(f1, ops, f2)
         if not f2 then f2 = f1 end
         local start, stop = tok.pr.start:copy(), tok.pr.stop:copy()
@@ -358,6 +358,147 @@ local function parse(tokens)
             left = Node("binOp", { opTok, left, right }, PositionRange(start, stop))
         end
         return left
+    end
+    struct = function()
+        local start= tok.pr.start:copy()
+        advance()
+        local vars, funcs, nameNode, var, type_, err = {}, {}
+        nameNode, err = atom() if err then return nil, err end
+        if nameNode.name ~= "name" then return nil, Error("syntax error", "expected name", nameNode.pr:copy()) end
+        if tok ~= Token("nl") then return nil, Error("syntax error", "expected new line", tok.pr:copy()) end
+        advance()
+        local stop = tok.pr.stop:copy()
+        while true do
+            if tok == Token("kw","end") then break end
+            if tok == Token("eof") then return nil, Error("syntax error", "expected name", tok.pr:copy()) end
+            if tok == Token("func") then
+                local f f, err = func()
+            end
+            var, err = atom() if err then return nil, err end
+            if var.name ~= "name" then return nil, Error("syntax error", "expected name", var.pr:copy()) end
+            if tok == Token("rep") then
+                advance()
+                type_, err = atom() if err then return nil, err end
+                if type_.name ~= "type" and type_.name ~= "name" then return nil, Error("syntax error", "expected type", type_.pr:copy()) end
+            end
+            push(vars, { var, type_ })
+            if tok ~= Token("nl") and tok ~= Token("kw","end") then
+                return nil, Error("syntax error", "expected new line or '"..words.kw["end"].."'", tok.pr:copy())
+            end
+            advance()
+        end
+        stop = tok.pr.stop:copy()
+        advance()
+        return Node("struct",{ nameNode, vars },PositionRange(start, stop))
+    end
+    forExpr = function()
+        local start= tok.pr.start:copy()
+        advance()
+        local nameNode, iterator, body, err
+        nameNode, err = expr() if err then return nil, err end
+        if tok == Token("kw","of") then
+            advance()
+            iterator, err = expr() if err then return nil, err end
+        end
+        local stop
+        if tok == Token("nl") then
+            body, err = statements({ Token("kw","end") }) if err then return nil, err end
+            stop = tok.pr.stop:copy()
+            advance()
+        else
+            body, err = statement() if err then return nil, err end
+            stop = tok.pr.stop:copy()
+        end
+        if iterator then return Node("forOf",{ nameNode, iterator, body }, PositionRange(start, stop))
+        else return Node("for",{ nameNode, body }, PositionRange(start, stop)) end
+    end
+    whileExpr = function()
+        local start= tok.pr.start:copy()
+        advance()
+        local condNode, body, err
+        condNode, err = expr() if err then return nil, err end
+        if tok == Token("nl") then
+            advance()
+            body, err = statements({ Token("kw","end") }) if err then return nil, err end
+            advance()
+        else
+            body, err = statement() if err then return nil, err end
+        end
+        return Node("while",{ condNode, body },PositionRange(start, tok.pr.stop:copy()))
+    end
+    ifExpr = function()
+        local start= tok.pr.start:copy()
+        local condNodes, bodyNodes, condNode, bodyNode, elseNode, err = {}, {}
+        local stop = tok.pr.stop:copy()
+        while not contains({ Token("kw","else"), Token("kw","end") }, tok) do
+            advance()
+            condNode, err = expr() if err then return nil, err end
+            push(condNodes, condNode)
+            stop = tok.pr.stop:copy()
+            if tok == Token("nl") then
+                while tok == Token("nl") do advance() end
+                bodyNode, err = statements({ Token("kw","elif"), Token("kw","else"), Token("kw","end") }) if err then return nil, err end
+                push(bodyNodes, bodyNode)
+            else
+                bodyNode, err = statement() if err then return nil, err end
+                push(bodyNodes, bodyNode)
+            end
+            while tok == Token("nl") do advance() end
+            stop = tok.pr.stop:copy()
+        end
+        if tok == Token("kw","else") then
+            advance()
+            if tok == Token("nl") then
+                while tok == Token("nl") do advance() end
+                elseNode, err = statements({ Token("kw","elif"), Token("kw","else"), Token("kw","end") }) if err then return nil, err end
+            else
+                elseNode, err = statement() if err then return nil, err end
+            end
+        end
+        if tok == Token("kw","else") then return nil, Error("syntax error", "expected "..words.kw["end"], tok.pr:copy()) end
+        stop = tok.pr.stop:copy()
+        advance()
+        return Node("if", { condNodes, bodyNodes, elseNode }, PositionRange(start, stop))
+    end
+    func = function()
+        local start, stop = tok.pr.start:copy(), tok.pr.stop:copy()
+        advance()
+        local name, vars, varTypes, body, type_, err = nil, {}, {}
+        name, err = atom() if err then return nil, err end
+        if name.name ~= "name" then return nil, Error("syntax error", "expected name, got "..str(name.name), name.pr:copy()) end
+        if tok ~= Token("eval","in") then return nil, Error("syntax error", "expected '"..delimiters.eval[1].."'", tok.pr:copy()) end
+        advance()
+        while true do
+            local var, varType
+            var, err = atom() if err then return nil, err end
+            if var.name ~= "name" then return nil, Error("syntax error", "expected name, got "..str(var.name), var.pr:copy()) end
+            push(vars, var)
+            if tok == Token("rep") then
+                advance()
+                varType, err = atom() if err then return nil, err end
+                if varType.name ~= "name" and varType.name ~= "type" then return nil, Error("syntax error", "expected name, got "..str(varType.name), varType.pr:copy()) end
+                varTypes[var.args[1].value] = varType
+            end
+            if tok == Token("eval","out") then advance() break end
+            if tok ~= Token("sep") then return nil, Error("syntax error", "expected '"..symbols.sep.."'", tok.pr:copy()) end
+            advance()
+        end
+        if tok == Token("into") then
+            advance()
+            type_, err = atom() if err then return nil, err end
+            if type_.name ~= "type" and type_.name ~= "name" then return nil, Error("syntax error", "expected type, got "..str(type_.name), type_.pr:copy()) end
+        end
+        if tok == Token("nl") then
+            while tok == Token("nl") do advance() end
+            body, err = statements({ Token("kw","end") }) if err then return nil, err end
+            if tok ~= Token("kw","end") then return nil, Error("syntax error", "expected '"..words.kw["end"].."'", tok.pr:copy()) end
+            stop = tok.pr.stop:copy()
+            advance()
+            return Node("func",{ name, vars, varTypes, body, type_ },PositionRange(start, stop))
+        end
+        body, err = expr() if err then return nil, err end
+        stop = tok.pr.stop:copy()
+        return Node("func",{ name, vars, varTypes, body, type_ },PositionRange(start, stop))
     end
     atom = function()
         local tok_ = tok:copy()
@@ -393,9 +534,7 @@ local function parse(tokens)
         end
         return nil, Error("syntax error", "expected number/bool/string/type/name/null", tok.pr:copy())
     end
-    index = function()
-        return binOp(atom, { Token("index") })
-    end
+    index = function() return binOp(atom, { Token("index") }) end
     addr = function()
         if tok == Token("addr") then
             local start = tok.pr.start:copy()
@@ -482,79 +621,8 @@ local function parse(tokens)
     expr = function() return logic() end
     statement = function()
         local start = tok.pr.start:copy()
-        if tok == Token("kw","if") then
-            local condNodes, bodyNodes, condNode, bodyNode, elseNode, err = {}, {}
-            local stop = tok.pr.stop:copy()
-            while not contains({ Token("kw","else"), Token("kw","end") }, tok) do
-                advance()
-                condNode, err = expr() if err then return nil, err end
-                push(condNodes, condNode)
-                stop = tok.pr.stop:copy()
-                if tok == Token("nl") then
-                    while tok == Token("nl") do advance() end
-                    bodyNode, err = statements({ Token("kw","elif"), Token("kw","else"), Token("kw","end") }) if err then return nil, err end
-                    push(bodyNodes, bodyNode)
-                else
-                    bodyNode, err = statement() if err then return nil, err end
-                    push(bodyNodes, bodyNode)
-                end
-                while tok == Token("nl") do advance() end
-                stop = tok.pr.stop:copy()
-            end
-            if tok == Token("kw","else") then
-                advance()
-                if tok == Token("nl") then
-                    while tok == Token("nl") do advance() end
-                    elseNode, err = statements({ Token("kw","elif"), Token("kw","else"), Token("kw","end") }) if err then return nil, err end
-                else
-                    elseNode, err = statement() if err then return nil, err end
-               end
-            end
-            if tok == Token("kw","else") then return nil, Error("syntax error", "expected "..words.kw["end"], tok.pr:copy()) end
-            stop = tok.pr.stop:copy()
-            advance()
-            return Node("if", { condNodes, bodyNodes, elseNode }, PositionRange(start, stop))
-        end
-        if tok == Token("kw","func") then
-            local stop = tok.pr.stop:copy()
-            advance()
-            local name, vars, varTypes, body, type_, err = nil, {}, {}
-            name, err = atom() if err then return nil, err end
-            if name.name ~= "name" then return nil, Error("syntax error", "expected name, got "..str(name.name), name.pr:copy()) end
-            if tok ~= Token("eval","in") then return nil, Error("syntax error", "expected '"..delimiters.eval[1].."'", tok.pr:copy()) end
-            advance()
-            while true do
-                local var, varType
-                var, err = atom() if err then return nil, err end
-                if var.name ~= "name" then return nil, Error("syntax error", "expected name, got "..str(var.name), var.pr:copy()) end
-                push(vars, var)
-                if tok == Token("rep") then
-                    advance()
-                    varType, err = atom() if err then return nil, err end
-                    if varType.name ~= "name" and varType.name ~= "type" then return nil, Error("syntax error", "expected name, got "..str(varType.name), varType.pr:copy()) end
-                    varTypes[var.args[1].value] = varType
-                end
-                if tok == Token("eval","out") then advance() break end
-                if tok ~= Token("sep") then return nil, Error("syntax error", "expected '"..symbols.sep.."'", tok.pr:copy()) end
-                advance()
-            end
-            if tok == Token("into") then
-                advance()
-                type_, err = atom() if err then return nil, err end
-                if type_.name ~= "type" and type_.name ~= "name" then return nil, Error("syntax error", "expected type, got "..str(type_.name), type_.pr:copy()) end
-            end
-            if tok == Token("nl") then
-                while tok == Token("nl") do advance() end
-                body, err = statements({ Token("kw","end") }) if err then return nil, err end
-                if tok ~= Token("kw","end") then return nil, Error("syntax error", "expected '"..words.kw["end"].."'", tok.pr:copy()) end
-                stop = tok.pr.stop:copy()
-                advance()
-                return Node("func",{ name, vars, varTypes, body, type_ },PositionRange(start, stop))
-            end
-            body, err = expr() if err then return nil, err end
-            stop = tok.pr.stop:copy()
-            return Node("func",{ name, vars, varTypes, body, type_ },PositionRange(start, stop))
-        end
+        if tok == Token("kw","if") then return ifExpr() end
+        if tok == Token("kw","func") then return func() end
         if tok == Token("kw","return") then
             advance()
             local stop = tok.pr.stop:copy()
@@ -562,39 +630,8 @@ local function parse(tokens)
             stop = tok.pr.stop:copy()
             return Node("return", { node }, PositionRange(start, stop))
         end
-        if tok == Token("kw","while") then
-            advance()
-            local condNode, body, err
-            condNode, err = expr() if err then return nil, err end
-            if tok == Token("nl") then
-                advance()
-                body, err = statements({ Token("kw","end") }) if err then return nil, err end
-                advance()
-            else
-                body, err = statement() if err then return nil, err end
-            end
-            return Node("while",{ condNode, body },PositionRange(start, tok.pr.stop:copy()))
-        end
-        if tok == Token("kw","for") then
-            advance()
-            local nameNode, iterator, body, err
-            nameNode, err = expr() if err then return nil, err end
-            if tok == Token("kw","of") then
-                advance()
-                iterator, err = expr() if err then return nil, err end
-            end
-            local stop
-            if tok == Token("nl") then
-                body, err = statements({ Token("kw","end") }) if err then return nil, err end
-                stop = tok.pr.stop:copy()
-                advance()
-            else
-                body, err = statement() if err then return nil, err end
-                stop = tok.pr.stop:copy()
-            end
-            if iterator then return Node("forOf",{ nameNode, iterator, body }, PositionRange(start, stop))
-            else return Node("for",{ nameNode, body }, PositionRange(start, stop)) end
-        end
+        if tok == Token("kw","while") then return whileExpr() end
+        if tok == Token("kw","for") then return forExpr() end
         if tok == Token("kw","inc") then
             advance()
             local nameNode, err = index() if err then return nil, err end
@@ -607,34 +644,7 @@ local function parse(tokens)
         end
         if tok == Token("kw","break") then local tok_=tok:copy() advance() return Node("break",{ tok_:copy() },tok_.pr:copy()) end
         if tok == Token("kw","skip") then local tok_=tok:copy() advance() return Node("skip",{ tok_:copy() },tok_.pr:copy()) end
-        if tok == Token("kw","struct") then
-            advance()
-            local vars, nameNode, var, type_, err = {}
-            nameNode, err = atom() if err then return nil, err end
-            if nameNode.name ~= "name" then return nil, Error("syntax error", "expected name", nameNode.pr:copy()) end
-            if tok ~= Token("nl") then return nil, Error("syntax error", "expected new line", tok.pr:copy()) end
-            advance()
-            local stop = tok.pr.stop:copy()
-            while true do
-                if tok == Token("kw","end") then break end
-                if tok == Token("eof") then return nil, Error("syntax error", "expected name", tok.pr:copy()) end
-                var, err = atom() if err then return nil, err end
-                if var.name ~= "name" then return nil, Error("syntax error", "expected name", var.pr:copy()) end
-                if tok == Token("rep") then
-                    advance()
-                    type_, err = atom() if err then return nil, err end
-                    if type_.name ~= "type" and type_.name ~= "name" then return nil, Error("syntax error", "expected type", type_.pr:copy()) end
-                end
-                push(vars, { var, type_ })
-                if tok ~= Token("nl") and tok ~= Token("kw","end") then
-                    return nil, Error("syntax error", "expected new line or '"..words.kw["end"].."'", tok.pr:copy())
-                end
-                advance()
-            end
-            stop = tok.pr.stop:copy()
-            advance()
-            return Node("struct",{ nameNode, vars },PositionRange(start, stop))
-        end
+        if tok == Token("kw","struct") then return struct() end
         local node, err = expr() if err then return nil, err end
         if tok == Token("kw","assign") then
             advance()
