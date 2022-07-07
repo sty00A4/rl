@@ -122,7 +122,7 @@ local words = {
     bool = { "true", "false" },
     null = "null",
     type = { number = "Number", string = "String", bool = "Bool", type = "Type", null = "Null", list = "List",
-             range = "Range", func = "Func", luaFunc = "LuaFunc" }
+             range = "Range", func = "Func", luaFunc = "LuaFunc", structDef = "StructDef" }
 }
 local symbols = {
     nl = ";", rep = ":", sep = ",", safe = "?", index = ".", into = "->", addr = "&",
@@ -518,16 +518,22 @@ local function parse(tokens)
         if tok == Token("kw","func") then
             local stop = tok.pr.stop:copy()
             advance()
-            local name, vars, body, type_, err = nil, {}
+            local name, vars, varTypes, body, type_, err = nil, {}, {}
             name, err = atom() if err then return nil, err end
             if name.name ~= "name" then return nil, Error("syntax error", "expected name, got "..str(name.name), name.pr:copy()) end
             if tok ~= Token("eval","in") then return nil, Error("syntax error", "expected '"..delimiters.eval[1].."'", tok.pr:copy()) end
             advance()
             while true do
-                local var
+                local var, varType
                 var, err = atom() if err then return nil, err end
                 if var.name ~= "name" then return nil, Error("syntax error", "expected name, got "..str(var.name), var.pr:copy()) end
                 push(vars, var)
+                if tok == Token("rep") then
+                    advance()
+                    varType, err = atom() if err then return nil, err end
+                    if varType.name ~= "name" and varType.name ~= "type" then return nil, Error("syntax error", "expected name, got "..str(varType.name), varType.pr:copy()) end
+                    varTypes[var.args[1].value] = varType
+                end
                 if tok == Token("eval","out") then advance() break end
                 if tok ~= Token("sep") then return nil, Error("syntax error", "expected '"..symbols.sep.."'", tok.pr:copy()) end
                 advance()
@@ -543,11 +549,11 @@ local function parse(tokens)
                 if tok ~= Token("kw","end") then return nil, Error("syntax error", "expected '"..words.kw["end"].."'", tok.pr:copy()) end
                 stop = tok.pr.stop:copy()
                 advance()
-                return Node("func",{ name, vars, body, type_ },PositionRange(start, stop))
+                return Node("func",{ name, vars, varTypes, body, type_ },PositionRange(start, stop))
             end
             body, err = expr() if err then return nil, err end
             stop = tok.pr.stop:copy()
-            return Node("func",{ name, vars, body, type_ },PositionRange(start, stop))
+            return Node("func",{ name, vars, varTypes, body, type_ },PositionRange(start, stop))
         end
         if tok == Token("kw","return") then
             advance()
@@ -681,6 +687,7 @@ Number = function(number)
               toString = function(s) return String(tostring(s.value)) end,
               toBool = function(s) return Bool(s.value ~= 0) end,
               toList = function(s) return List({ s:copy() }) end,
+              toType = function() return Type("number") end
             },
             { __name = "Number", __tostring = function(s) return tostring(s.value) end }
     )
@@ -692,6 +699,7 @@ Bool = function(bool)
               toString = function(s) return String(tostring(s.value)) end,
               toBool = function(s) return s:copy() end,
               toList = function(s) return List({ s:copy() }) end,
+              toType = function() return Type("bool") end
             },
             { __name = "Bool", __tostring = function(s) return tostring(s.value) end }
     )
@@ -713,6 +721,7 @@ String = function(str_)
                   for i = 1, #s.value do push(list, String(s.value:sub(i,i))) end
                   return List(list)
               end,
+              toType = function() return Type("string") end
             },
             { __name = "String", __tostring = function(s) return tostring(s.value) end }
     )
@@ -721,8 +730,9 @@ Type = function(type_)
     return setmetatable(
             { value = type_, copy = function(s) return Type(s.value) end,
               toString = function(s) return String(s.value) end,
-              toBool = function(s) return Bool(true) end,
+              toBool = function() return Bool(true) end,
               toList = function(s) return List({ s:copy() }) end,
+              toType = function() return Type("type") end
             },
             { __name = "Type", __tostring = function(s) return tostring(s.value) end }
     )
@@ -734,6 +744,7 @@ Null = function()
       toString = function() return String("null") end,
       toBool = function() return Bool(false) end,
       toList = function() return List({}) end,
+      toType = function() return Type("null") end
     },
     { __name = "Null", __tostring = function() return "null" end }
     )
@@ -746,8 +757,9 @@ List = function(values)
                 return List(list)
             end,
               toString = function(s) return String(str(s.values)) end,
-              toBool = function(s) return Bool(true) end,
+              toBool = function() return Bool(true) end,
               toList = function(s) return s:copy() end,
+              toType = function() return Type("list") end
             },
             { __name = "List", __tostring = function(s) return str(s.values) end }
     )
@@ -756,7 +768,7 @@ Range = function(start, stop)
     return setmetatable(
             { start = start, stop = stop, copy = function(s) return Range(s.start, s.stop) end,
               toString = function(s) return String(str(s)) end,
-              toBool = function(s) return Bool(true) end,
+              toBool = function() return Bool(true) end,
               toList = function(s)
                   local list = {}
                   local dir = 1
@@ -764,15 +776,17 @@ Range = function(start, stop)
                   for i = s.start, s.stop, dir do push(list, Number(i)) end
                   return List(list)
               end,
+              toType = function() return Type("range") end
             },
             { __name = "Range", __tostring = function(s) return str(s.start)..".."..str(s.stop) end }
     )
 end
-Func = function(vars, body, returnType)
+Func = function(vars, varTypes, body, returnType)
     return setmetatable(
-            { vars = vars, body = body, returnType = returnType, copy = function(s) return Func(copy(s.vars), s.body:copy()) end,
+            { vars = vars, varTypes = varTypes, body = body, returnType = returnType, copy = function(s) return Func(copy(s.vars), s.body:copy()) end,
               toString = function(s) return String(str(s)) end,
-              toBool = function(s) return Bool(true) end,
+              toBool = function() return Bool(true) end,
+              toType = function() return Type("func") end
             },
             { __name = "Func", __tostring = function(s)
                 local str_ = "<func("
@@ -783,11 +797,12 @@ Func = function(vars, body, returnType)
             end }
     )
 end
-LuaFunc = function(vars, func, returnType)
+LuaFunc = function(vars, varTypes, func, returnType)
     return setmetatable(
-            { vars = vars, func = func, returnType = returnType, copy = function(s) return LuaFunc(copy(s.vars), s.func) end,
+            { vars = vars, varTypes = varTypes, func = func, returnType = returnType, copy = function(s) return LuaFunc(copy(s.vars), s.func) end,
               toString = function(s) return String(str(s)) end,
-              toBool = function(s) return Bool(true) end,
+              toBool = function() return Bool(true) end,
+              toType = function() return Type("luaFunc") end
             },
             { __name = "LuaFunc", __tostring = function(s)
                 local str_ = "<lua-func("
@@ -800,7 +815,11 @@ LuaFunc = function(vars, func, returnType)
 end
 StructDef = function(name, vars)
     return setmetatable(
-            { name = name, vars = vars, copy = function(s) return StructDef(s.name, copy(s.vars)) end },
+            { name = name, vars = vars, copy = function(s) return StructDef(s.name, copy(s.vars)) end,
+              toString = function(s) return String(tostring(s)) end,
+              toBool = function() return Bool(true) end,
+              toType = function(s) return Type(s.name) end
+            },
             { __name = "StructDef", __tostring = function(s)
                 local subs = ""
                 for _, v in pairs(s.vars) do subs = subs..v[1].."," end
@@ -812,6 +831,9 @@ end
 Struct = function(structName, varAddrs)
     return setmetatable(
             { name = structName, varAddrs = varAddrs,
+              toString = function(s) return String(tostring(s)) end,
+              toBool = function() return Bool(true) end,
+              toType = function(s) return Type(s.name) end,
               copy = function(s)
                   local newVarAddrs = {}
                   for k, v in pairs(s.varAddrs) do newVarAddrs[k] = v end
@@ -853,40 +875,42 @@ local function Memory(memory)
     end })
 end
 -- built-in funcitons
+local memStart
 local MEMORY MEMORY = Memory({
     -- print
-    LuaFunc({ "value" }, function(_, _, args)
+    LuaFunc({ "value" }, { }, function(_, _, args)
         print(str(args[1]))
         return Null()
     end, Type("null")),
     -- debugMem
-    LuaFunc({ }, function()
+    LuaFunc({ }, {}, function()
         print("\n- memory -")
-        for i = 6, #MEMORY do print(i, str(MEMORY[i],true)) end
+        for i = memStart, #MEMORY do print(i, str(MEMORY[i],true)) end
         print()
         return Null()
     end, Type("null")),
     -- debugScopes
-    LuaFunc({ }, function(scopes)
+    LuaFunc({ }, {}, function(scopes)
         print("- scopes -", table.entries(scopes.scopes))
         for i, scope in ipairs(scopes.scopes) do if i ~= table.entries(scopes.scopes) then print(i, scope.label, str(scope.vars)) end end
         print()
         return Null()
     end, Type("null")),
     -- fromAddr
-    LuaFunc({ "addr" }, function(_, node, args)
+    LuaFunc({ "addr" }, { Type("number") }, function(_, node, args)
         if type(args[1]) ~= "Number" then return nil, false, Error("lua func error", "expected Number as #1 argument", node.pr:copy()) end
         if not MEMORY[math.floor(args[1].value)] then return nil, false, Error("lua func error", "memory addres "..str(args[1]).." doesn't exist", node.pr:copy()) end
         return MEMORY[math.floor(args[1].value)]:copy()
     end),
     -- setAddr
-    LuaFunc({ "var", "addr" }, function(scopes, node, args)
+    LuaFunc({ "var", "addr" }, { Type("string"), Type("number") }, function(scopes, node, args)
         if type(args[1]) ~= "String" then return nil, false, Error("lua func error", "expected String as #1 argument", node.pr:copy()) end
         if type(args[2]) ~= "Number" then return nil, false, Error("lua func error", "expected Number as #2 argument", node.pr:copy()) end
         local _, err = scopes:setAddr(node, args[1].value, args[2].value, MEMORY) if err then return nil, false, err end
         return Null()
     end, Type("null")),
 })
+memStart = #MEMORY+1
 local function Scope(vars, label)
     if not label then label = "<sub>" end
     if not vars then vars = {} end
@@ -992,11 +1016,11 @@ local function interpret(ast)
         return Bool(false)
     end
     local function typeOfType(type_)
+        if type_ == nil then error("argument is nil", 2) end
         if words.type[type_.value] then return words.type[type_.value] end
-        if type(type_) == "Struct" then return type_.name end
+        if type(type_) == "Struct" or type(type_) == "StructDef" then return type_.name end
         if contains(words.type, type(type_)) then return type(type_) end
         local value, err = scopes:get(type_.name, MEMORY) if err then return end
-        if type(value) == "StructDef" then return value.name end
     end
     nodes = {
         notImplemented = function(node) return nil, false, Error("not implemented", node.name, node.pr:copy()) end,
@@ -1060,12 +1084,12 @@ local function interpret(ast)
             if type(type_) ~= "Type" then return nil, false, Error("cast error", "expected Type", node.args[2].pr:copy()) end
             local castValue
             if typeOfType(type_) == type(value) then return value end
-            if type_.value == "type" then castValue = Type(type(value)) end
+            if type_.value == "type" and value.toType then castValue = value:toType() end
             if type_.value == "null" then castValue = Null() end
-            if type_.value == "number" then castValue = value:toNumber() end
-            if type_.value == "bool" then castValue = value:toBool() end
-            if type_.value == "string" then castValue = value:toString() end
-            if type_.value == "list" then castValue = value:toList() end
+            if type_.value == "number" and value.toNumber then castValue = value:toNumber() end
+            if type_.value == "bool" and value.toBool then castValue = value:toBool() end
+            if type_.value == "string" and value.toString then castValue = value:toString() end
+            if type_.value == "list" and value.toList then castValue = value:toList() end
             if not castValue then return nil, false, Error("cast error", "cannot cast "..type(value).." to "..typeOfType(type_), node.pr:copy()) end
             return castValue
         end,
@@ -1324,11 +1348,11 @@ local function interpret(ast)
         ["break"] = function() return Null(), "break" end,
         skip = function() return Null(), "skip" end,
         func = function(node)
-            local type_, err if node.args[4] then
-                type_, _, err = visit(node.args[4]) if err then return nil, false, err end
-                if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[4].pr:copy()) end
+            local type_, err if node.args[5] then
+                type_, _, err = visit(node.args[5]) if err then return nil, false, err end
+                if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[5].pr:copy()) end
             end
-            local func = Func(node.args[2], node.args[3], type_)
+            local func = Func(node.args[2], node.args[3], node.args[4], type_)
             local addr addr, err = scopes:set(node.args[1], func, MEMORY) if err then return nil, false, err end
             return func
         end,
@@ -1343,6 +1367,14 @@ local function interpret(ast)
                 end
                 local value
                 local mainScopes = scopes
+                for i, var in ipairs(func.vars) do
+                    if func.varTypes[var.args[1].value] and args[i] then
+                        local type_ type_, _, err = visit(func.varTypes[var.args[1].value]) if err then return nil, false, err end
+                        if typeOfType(type_) ~= typeOfType(args[i]) then
+                            return nil, false, Error("func error","type mismatch for argument #"..str(i)..", "..tostring(typeOfType(args[i])).." and "..tostring(typeOfType(type_)),node.pr:copy())
+                        end
+                    end
+                end
                 scopes = stdScope()
                 scopes:new(Scope({}, "func"))
                 for i, var in ipairs(func.vars) do
@@ -1443,8 +1475,6 @@ local function interpret(ast)
     if not getmetatable(value) then return nil, false, Error("dev error", "value returned is not a metatable") end
     return value
 end
-
---TODO: check if all errors work
 
 return {
     lex = lex, parse = parse, interpret = interpret,
