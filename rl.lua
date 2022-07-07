@@ -62,6 +62,11 @@ end
 table.contains = function(t, val) return table.find(t, (function(_, v) return v == val end)) end
 table.containsStart = function(t, val) return table.find(t, (function(_, v) return v:sub(1,#val) == val end)) end
 table.containsKey = function(t, key) return table.find(t, (function(k, _) return k == key end)) end
+table.entries = function(t)
+    local count = 0
+    for _, __ in pairs(t) do count = count + 1 end
+    return count
+end
 local push = table.insert
 local pop = table.remove
 local concat = table.concat
@@ -807,7 +812,11 @@ end
 Struct = function(structName, varAddrs)
     return setmetatable(
             { name = structName, varAddrs = varAddrs,
-              copy = function(s) return Struct(s.name, copy(s.varAddr)) end,
+              copy = function(s)
+                  local newVarAddrs = {}
+                  for k, v in pairs(s.varAddrs) do newVarAddrs[k] = v end
+                  return Struct(s.name, newVarAddrs)
+              end,
               setAddr = function(s, node, name, addr, memory)
                   local value, err = s:get(name) if err then return nil, err end
                   return nil, Error("name error", "name '"..name.."' cannot be found", node.pr:copy())
@@ -821,7 +830,7 @@ Struct = function(structName, varAddrs)
                   return nil, Error("name error", "name '"..name.."' cannot be found", node.pr:copy())
               end,
             },
-            { __name = "Struct", __tostrings = function(s)
+            { __name = "Struct", __tostring = function(s)
                 local subs = ""
                 for k, addr in pairs(s.varAddrs) do subs = subs..k.."="..tostring(addr).."," end
                 subs = subs:sub(1,#subs-1)
@@ -1052,11 +1061,9 @@ local function interpret(ast)
         index = function(node)
             if node.args[3].name ~= "name" then return nil, false, Error("index error", "expected name", node.args[3].pr:copy()) end
             local head, index, addr, err
-            --TODO: weird varAddrs not in head bug
             head, _, err = visit(node.args[2]) if err then return nil, false, err end
             if type(head) ~= "Struct" then return nil, false, Error("index error", "cannot index "..type(head), node.args[2].pr:copy()) end
             index = node.args[3].args[1].value
-            print(str(head), index)
             addr = head.varAddrs[index]
             if addr == nil then return nil, false, Error("index error", "index '"..index.."' is not in '"..head.name.."'", node.pr:copy()) end
             if not MEMORY[addr] then return nil, false, Error("memory error", "address "..str(addr).." doesn't exists", node.pr:copy()) end
@@ -1377,7 +1384,6 @@ local function interpret(ast)
                     MEMORY[addr] = args[i]
                     varAddrs[varDef[1]] = addr
                 end
-                print(str(varAddrs))
                 return Struct(func.name, varAddrs)
             end
             return nil, false, Error("value error", "expected Func/LuaFunc/StructDef", node.args[1].pr:copy())
