@@ -829,6 +829,12 @@ Struct = function(structName, varAddrs)
                   end
                   return nil, Error("name error", "name '"..name.."' cannot be found", node.pr:copy())
               end,
+              deleteAddrs = function(s, memory)
+                  for _, addr in pairs(s.varAddrs) do
+                      if type(memory[addr]) == "Struct" then memory[addr]:deleteAddrs(memory) end
+                      memory[addr] = nil
+                  end
+              end
             },
             { __name = "Struct", __tostring = function(s)
                 local subs = ""
@@ -862,8 +868,8 @@ local MEMORY MEMORY = Memory({
     end, Type("null")),
     -- debugScopes
     LuaFunc({ }, function(scopes)
-        print("- scopes -")
-        for i, scope in ipairs(scopes.scopes) do print(scope.label, str(scope.vars)) end
+        print("- scopes -", table.entries(scopes.scopes))
+        for i, scope in ipairs(scopes.scopes) do if i ~= table.entries(scopes.scopes) then print(i, scope.label, str(scope.vars)) end end
         print()
         return Null()
     end, Type("null")),
@@ -943,8 +949,13 @@ local function Scopes(scopes)
                 return addr
             end,
               new = function(s, scope) s.scopes[#s.scopes+1] = scope end,
-              --TODO: garbage collector
-              drop = function(s) pop(s.scopes) end
+              drop = function(s)
+                  for _, addr in pairs(s.scopes[#s.scopes].vars) do
+                      if type(MEMORY[addr]) == "Struct" then MEMORY[addr]:deleteAddrs(MEMORY) end
+                      MEMORY[addr] = nil
+                  end
+                  pop(s.scopes)
+              end
             },
             { __name = "Scopes", __tostring = function(s)
                 return "Scopes("..str(s.scopes)..")"

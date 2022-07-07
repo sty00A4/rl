@@ -7,5 +7,4 @@ struct Person
     lang     : Language
 end
 person is Person("sty00a4", 17, Language("lua"))
-person.lang is Language("python")
-return person.name + " is " + (person.age as String) + " ages old. He programs in " + person.lang.name + "."
+return person.name + " is " + (person.age as String) + " years old. He programs in " + person.lang.name + "."
