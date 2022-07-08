@@ -5,7 +5,7 @@ struct Person
     name     : String
     age      : Number
     lang     : Language
-    func introduce(self, lang:Bool) -> String
+    func introduce(self, lang:Bool is false) -> String
         string is "I'm " + self.name + " and " + (self.age as String) + " years old."
         # include lang if asked for
         if (lang) string is string + " I program in " + self.lang.name + "." end
@@ -15,7 +15,7 @@ struct Person
     end
 end
 person is Person("sty00a4", 17, Language("lua"))
-for i of 1 to 10
+for 1 to 10
     # print lang on every even age
-    print(person.introduce(i % 2 = 0))
+    print(person.introduce())
 end

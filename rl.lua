@@ -151,7 +151,7 @@ end
 local function PositionRange(start, stop)
     return setmetatable(
             {
-                start = start, stop = stop, fn = start.fn, text = start.text,
+                start = start:copy(), stop = stop:copy(), fn = start.fn, text = start.text,
                 copy = function(s) return PositionRange(s.start:copy(), s.stop:copy()) end,
                 sub = function(s) return s.text:sub(s.start.idx,s.stop.idx) end
             },
@@ -466,13 +466,13 @@ local function parse(tokens)
     func = function()
         local start, stop = tok.pr.start:copy(), tok.pr.stop:copy()
         advance()
-        local name, vars, varTypes, body, type_, err = nil, {}, {}
+        local name, vars, varTypes, values, mustAssign, body, type_, err = nil, {}, {}, {}, false
         name, err = atom() if err then return nil, err end
         if name.name ~= "name" then return nil, Error("syntax error", "expected name, got "..str(name.name), name.pr:copy()) end
         if tok ~= Token("eval","in") then return nil, Error("syntax error", "expected '"..delimiters.eval[1].."'", tok.pr:copy()) end
         advance()
         while true do
-            local var, varType
+            local var, varType, value
             var, err = atom() if err then return nil, err end
             if var.name ~= "name" then return nil, Error("syntax error", "expected name, got "..str(var.name), var.pr:copy()) end
             push(vars, var)
@@ -482,6 +482,12 @@ local function parse(tokens)
                 if varType.name ~= "name" and varType.name ~= "type" then return nil, Error("syntax error", "expected name, got "..str(varType.name), varType.pr:copy()) end
                 varTypes[var.args[1].value] = varType
             end
+            if tok == Token("kw","assign") then
+                mustAssign = true
+                advance()
+                value, err = expr() if err then return nil, err end
+                values[var.args[1].value] = value
+            else if mustAssign then return nil, Error("syntax error", "expected assignment of name", tok.pr:copy()) end end
             if tok == Token("eval","out") then advance() break end
             if tok ~= Token("sep") then return nil, Error("syntax error", "expected '"..symbols.sep.."'", tok.pr:copy()) end
             advance()
@@ -497,11 +503,11 @@ local function parse(tokens)
             if tok ~= Token("kw","end") then return nil, Error("syntax error", "expected '"..words.kw["end"].."'", tok.pr:copy()) end
             stop = tok.pr.stop:copy()
             advance()
-            return Node("func",{ name, vars, varTypes, body, type_ },PositionRange(start, stop))
+            return Node("func",{ name, vars, varTypes, values, body, type_ },PositionRange(start, stop))
         end
         body, err = expr() if err then return nil, err end
         stop = tok.pr.stop:copy()
-        return Node("func",{ name, vars, varTypes, body, type_ },PositionRange(start, stop))
+        return Node("func",{ name, vars, varTypes, values, body, type_ },PositionRange(start, stop))
     end
     atom = function()
         local tok_ = tok:copy()
@@ -794,9 +800,10 @@ Range = function(start, stop)
             { __name = "Range", __tostring = function(s) return str(s.start)..".."..str(s.stop) end }
     )
 end
-Func = function(vars, varTypes, body, returnType)
+Func = function(vars, varTypes, values, body, returnType)
     return setmetatable(
-            { vars = vars, varTypes = varTypes, body = body, returnType = returnType, copy = function(s) return Func(copy(s.vars), s.body:copy()) end,
+            { vars = vars, varTypes = varTypes, values = values, body = body, returnType = returnType,
+              copy = function(s) return Func(s.vars, s.varTypes, s.values, s.body:copy(), s.returnType:copy()) end,
               toString = function(s) return String(str(s)) end,
               toBool = function() return Bool(true) end,
               toType = function() return Type("func") end
@@ -1351,11 +1358,12 @@ local function interpret(ast)
         ["break"] = function() return Null(), "break" end,
         skip = function() return Null(), "skip" end,
         func = function(node)
-            local type_, err if node.args[5] then
-                type_, _, err = visit(node.args[5]) if err then return nil, false, err end
-                if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[5].pr:copy()) end
+            -- 1:name 2:vars 3:varTypes 4:values 5:body 6:type_
+            local type_, err if node.args[6] then
+                type_, _, err = visit(node.args[6]) if err then return nil, false, err end
+                if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[6].pr:copy()) end
             end
-            local func = Func(node.args[2], node.args[3], node.args[4], type_)
+            local func = Func(node.args[2], node.args[3], node.args[4], node.args[5], type_)
             local addr addr, err = scopes:set(node.args[1], func, MEMORY) if err then return nil, false, err end
             return func
         end,
@@ -1392,7 +1400,11 @@ local function interpret(ast)
                 scopes:new(Scope({}, "func"))
                 scopes.scopes[#scopes.scopes].vars["self"] = headAddr
                 for i, var in ipairs(func.vars) do
-                    if not args[i] then return nil, false, Error("func error", "too few arguments", node.pr:copy()) end
+                    if not args[i] then
+                        if not func.values[var.args[1].value] then return nil, false, Error("func error", "too few arguments", node.pr:copy()) end
+                        local value value, _, err = visit(func.values[var.args[1].value]) if err then return nil, false, err end
+                        args[i] = value
+                    end
                     _, err = scopes:set(var, args[i], MEMORY) if err then return nil, false, err end
                 end
                 value, _, err = visit(func.body) if err then return nil, false, err end
@@ -1442,11 +1454,11 @@ local function interpret(ast)
                     varAddrs[varDef[1]] = addr
                 end
                 for name, subFunc in pairs(func.funcs) do
-                    local type_ if node.args[5] then
-                        type_, _, err = visit(node.args[5]) if err then return nil, false, err end
-                        if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[5].pr:copy()) end
+                    local type_ if node.args[6] then
+                        type_, _, err = visit(node.args[6]) if err then return nil, false, err end
+                        if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[6].pr:copy()) end
                     end
-                    local func_ = Func(subFunc.args[2], subFunc.args[3], subFunc.args[4], type_)
+                    local func_ = Func(subFunc.args[2], subFunc.args[3], subFunc.args[4], subFunc.args[5], type_)
                     local addr addr, err = MEMORY:new() if err then return nil, false, err end
                     MEMORY[addr] = func_
                     varAddrs[name] = addr
