@@ -5,9 +5,17 @@ struct Person
     name     : String
     age      : Number
     lang     : Language
-end
-func info(person:Person) -> String
-    return person.name + " is " + (person.age as String) + " years old. He programs in " + person.lang.name + "."
+    func introduce(self, lang:Bool) -> String
+        string is "I'm " + self.name + " and " + (self.age as String) + " years old."
+        # include lang if asked for
+        if (lang) string is string + " I program in " + self.lang.name + "." end
+        # change age each introduction
+        inc self.age
+        return string
+    end
 end
 person is Person("sty00a4", 17, Language("lua"))
-return info("sty00a4")
+for i of 1 to 10
+    # print lang on every even age
+    print(person.introduce(i % 2 = 0))
+end

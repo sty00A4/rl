@@ -362,26 +362,29 @@ local function parse(tokens)
     struct = function()
         local start= tok.pr.start:copy()
         advance()
-        local vars, funcs, nameNode, var, type_, err = {}, {}
+        local vars, funcs, nameNode, var, err = {}, {}
         nameNode, err = atom() if err then return nil, err end
         if nameNode.name ~= "name" then return nil, Error("syntax error", "expected name", nameNode.pr:copy()) end
         if tok ~= Token("nl") then return nil, Error("syntax error", "expected new line", tok.pr:copy()) end
         advance()
         local stop = tok.pr.stop:copy()
         while true do
+            local type_
             if tok == Token("kw","end") then break end
             if tok == Token("eof") then return nil, Error("syntax error", "expected name", tok.pr:copy()) end
-            if tok == Token("func") then
-                local f f, err = func()
+            if tok == Token("kw","func") then
+                local f f, err = func() if err then return nil, err end
+                push(funcs, f)
+            else
+                var, err = atom() if err then return nil, err end
+                if var.name ~= "name" then return nil, Error("syntax error", "expected name", var.pr:copy()) end
+                if tok == Token("rep") then
+                    advance()
+                    type_, err = atom() if err then return nil, err end
+                    if type_.name ~= "type" and type_.name ~= "name" then return nil, Error("syntax error", "expected type", type_.pr:copy()) end
+                end
+                push(vars, { var, type_ })
             end
-            var, err = atom() if err then return nil, err end
-            if var.name ~= "name" then return nil, Error("syntax error", "expected name", var.pr:copy()) end
-            if tok == Token("rep") then
-                advance()
-                type_, err = atom() if err then return nil, err end
-                if type_.name ~= "type" and type_.name ~= "name" then return nil, Error("syntax error", "expected type", type_.pr:copy()) end
-            end
-            push(vars, { var, type_ })
             if tok ~= Token("nl") and tok ~= Token("kw","end") then
                 return nil, Error("syntax error", "expected new line or '"..words.kw["end"].."'", tok.pr:copy())
             end
@@ -389,7 +392,7 @@ local function parse(tokens)
         end
         stop = tok.pr.stop:copy()
         advance()
-        return Node("struct",{ nameNode, vars },PositionRange(start, stop))
+        return Node("struct",{ nameNode, vars, funcs },PositionRange(start, stop))
     end
     forExpr = function()
         local start= tok.pr.start:copy()
@@ -823,9 +826,11 @@ LuaFunc = function(vars, varTypes, func, returnType)
             end }
     )
 end
-StructDef = function(name, vars)
+StructDef = function(name, vars, funcs)
     return setmetatable(
-            { name = name, vars = vars, copy = function(s) return StructDef(s.name, copy(s.vars)) end,
+            { name = name, vars = vars, funcs = funcs, copy = function(s)
+                return StructDef(s.name, s.vars, s.funcs)
+            end,
               toString = function(s) return String(tostring(s)) end,
               toBool = function() return Bool(true) end,
               toType = function(s) return Type(s.name) end
@@ -848,18 +853,6 @@ Struct = function(structName, varAddrs)
                   local newVarAddrs = {}
                   for k, v in pairs(s.varAddrs) do newVarAddrs[k] = v end
                   return Struct(s.name, newVarAddrs)
-              end,
-              setAddr = function(s, node, name, addr, memory)
-                  local value, err = s:get(name) if err then return nil, err end
-                  return nil, Error("name error", "name '"..name.."' cannot be found", node.pr:copy())
-              end,
-              getAddr = function(s, node, name)
-                  local scope
-                  for _, v in ipairs(s.scopes) do if v:get(name) then scope=v end end
-                  if scope then
-                      return scope.vars[name]
-                  end
-                  return nil, Error("name error", "name '"..name.."' cannot be found", node.pr:copy())
               end,
               deleteAddrs = function(s, memory)
                   for _, addr in pairs(s.varAddrs) do
@@ -1368,8 +1361,18 @@ local function interpret(ast)
         end,
         call = function(node)
             local func, args, err = nil, {}
+            local selfCall, headAddr = false
+            if node.args[1].name == "binOp" then if node.args[1].args[1] == Token("index") then
+                selfCall = true
+                if node.args[1].args[2].name == "binOp" and node.args[1].args[2].args[1] == Token("index") then
+                    return nodes.indexAddr(node.args[1].args[2])
+                end
+                local name = node.args[1].args[2]
+                headAddr, err = scopes:getAddr(node, name.args[1].value) if err then return nil, false, err end
+            end end
             func, _, err = visit(node.args[1]) if err then return nil, false, err end
             if type(func) == "Func" then
+                if selfCall then push(args, MEMORY[headAddr]) end
                 for _, arg in ipairs(node.args[2]) do
                     local value
                     value, __, err = visit(arg) if err then return nil, false, err end
@@ -1387,6 +1390,7 @@ local function interpret(ast)
                 end
                 scopes = stdScope()
                 scopes:new(Scope({}, "func"))
+                scopes.scopes[#scopes.scopes].vars["self"] = headAddr
                 for i, var in ipairs(func.vars) do
                     if not args[i] then return nil, false, Error("func error", "too few arguments", node.pr:copy()) end
                     _, err = scopes:set(var, args[i], MEMORY) if err then return nil, false, err end
@@ -1437,6 +1441,16 @@ local function interpret(ast)
                     MEMORY[addr] = args[i]
                     varAddrs[varDef[1]] = addr
                 end
+                for name, subFunc in pairs(func.funcs) do
+                    local type_ if node.args[5] then
+                        type_, _, err = visit(node.args[5]) if err then return nil, false, err end
+                        if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[5].pr:copy()) end
+                    end
+                    local func_ = Func(subFunc.args[2], subFunc.args[3], subFunc.args[4], type_)
+                    local addr addr, err = MEMORY:new() if err then return nil, false, err end
+                    MEMORY[addr] = func_
+                    varAddrs[name] = addr
+                end
                 return Struct(func.name, varAddrs)
             end
             return nil, false, Error("value error", "expected Func/LuaFunc/StructDef", node.args[1].pr:copy())
@@ -1464,14 +1478,18 @@ local function interpret(ast)
             return nil, false, Error("name error", "address "..str(addr.value).." is not in memory", node.args[1].pr.copy())
         end,
         struct = function(node)
-            local nameNode, nodeVars, err = node.args[1], node.args[2]
-            local name, vars = nameNode.args[1].value, {}
+            local nameNode, nodeVars, nodeFuncs, err = node.args[1], node.args[2], node.args[3]
+            local name, vars, funcs = nameNode.args[1].value, {}, {}
             for _, varDef in ipairs(nodeVars) do
                 local var = varDef[1]
                 local type_ type_, _, err = visit(varDef[2]) if err then return nil, false, err end
                 push(vars, { var.args[1].value, type_ })
             end
-            scopes:set(name,StructDef(name, vars),MEMORY)
+            for _, funcNode in ipairs(nodeFuncs) do
+                local funcName = funcNode.args[1].args[1].value
+                funcs[funcName] = funcNode
+            end
+            scopes:set(name,StructDef(name, vars, funcs),MEMORY)
             return scopes:get(name, MEMORY)
         end
     }
