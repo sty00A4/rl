@@ -1402,8 +1402,7 @@ local function interpret(ast)
                 for i, var in ipairs(func.vars) do
                     if not args[i] then
                         if not func.values[var.args[1].value] then return nil, false, Error("func error", "too few arguments", node.pr:copy()) end
-                        local value value, _, err = visit(func.values[var.args[1].value]) if err then return nil, false, err end
-                        args[i] = value
+                        args[i], _, err = visit(func.values[var.args[1].value]) if err then return nil, false, err end
                     end
                     _, err = scopes:set(var, args[i], MEMORY) if err then return nil, false, err end
                 end
