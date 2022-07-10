@@ -91,6 +91,7 @@ local function str(val, raw, sep, start, stop, middle)
     if type(stop) ~= "string" then stop = " }" end
     if type(middle) ~= "string" then middle = "=" end
     if TYPE(val) == "table" then
+        if type(val) == "String" and raw then return '"'..tostring(val)..'"' end
         local meta = getmetatable(val) if meta then if meta.__tostring then return tostring(val) end end
         local s = start
         if meta then s = str(meta.__name,raw,sep,start,stop,middle)..s end
@@ -780,7 +781,7 @@ List = function(values)
               toList = function(s) return s:copy() end,
               toType = function() return Type("list") end
             },
-            { __name = "List", __tostring = function(s) return str(s.values) end }
+            { __name = "List", __tostring = function(s) return str(s.values, true) end }
     )
 end
 Range = function(start, stop)
@@ -1561,7 +1562,7 @@ local function interpret(ast)
 end
 
 return {
-    lex = lex, parse = parse, interpret = interpret,
+    lex = lex, parse = parse, interpret = interpret, str = str,
     Number = Number, Bool = Bool, String = String, Type = Type, Null = Null, List = List, Range = Range,
     Func = Func, LuaFunc = LuaFunc, Memory = Memory, Scope = Scope, Scopes = Scopes,
     Token = Token, Node = Node,

@@ -1,1 +1,1 @@
-return "list"[1 to 2]
+return "list" as List
