@@ -1167,6 +1167,20 @@ local function interpret(ast)
                     return value:copy()
                 end
             end
+            if type(list) == "String" then
+                if type(index) == "Number" then
+                    if index.value < 0 then index.value = #list.value + index.value end
+                    local value = String(list.value:sub(index.value+1,index.value+1))
+                    if value == nil then return nil, false, Error("index error", "index out of range", node.pr:copy()) end
+                    return value:copy()
+                end
+                if type(index) == "Range" then
+                    local min, max = index.start, index.stop
+                    if min < 0 then min = #list.value + min end if max < 0 then max = #list.value + max end
+                    local value = String(list.value:sub(min+1, max+1))
+                    return value:copy()
+                end
+            end
             if type(list) == "Range" then
                 if type(index) == "Number" then
                     if index.value < 0 then index.value = #list:toList().values + index.value end
