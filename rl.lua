@@ -920,7 +920,7 @@ local MEMORY MEMORY = Memory({
         return Null()
     end, Type("null")),
     -- push
-    LuaFunc({ "list", "value" }, { Type("string"), Type("number") }, { }, function(_, node, args)
+    LuaFunc({ "list", "value" }, { Type("string") }, { }, function(_, node, args)
         if type(args[1]) ~= "List" then return nil, false, Error("lua func error", "expected String as #1 argument", node.pr:copy()) end
         push(args[1].values, args[2]:copy())
         return args[1]:copy()
