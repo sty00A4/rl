@@ -935,8 +935,13 @@ local MEMORY MEMORY = Memory({
     LuaFunc({ "list", "string" }, { Type("list"), Type("string") }, { string=String("") }, function(_, _, args)
         return String((args[2].value):join(args[1].values))
     end, Type("string")),
+    -- STRING split
+    LuaFunc({ "string", "sep" }, { Type("string"), Type("string") }, { }, function(_, _, args)
+        return List(split(args[1].value, args[2].value))
+    end, Type("list")),
 })
 local ListFuncs = { push = 6, pop = 7, join = 8 }
+local StringFuncs = { split = 9 }
 memStart = #MEMORY+1
 local function Scope(vars, label)
     if not label then label = "<sub>" end
@@ -1135,6 +1140,13 @@ local function interpret(ast)
                 index = node.args[3].args[1].value
                 addr = ListFuncs[index]
                 if addr == nil then return nil, false, Error("index error", "index '"..index.."' is not a list function", node.pr:copy()) end
+                if not MEMORY[addr] then return nil, false, Error("memory error", "address "..str(addr).." doesn't exists", node.pr:copy()) end
+                return MEMORY[addr]
+            end
+            if type(head) == "String" then
+                index = node.args[3].args[1].value
+                addr = StringFuncs[index]
+                if addr == nil then return nil, false, Error("index error", "index '"..index.."' is not a string function", node.pr:copy()) end
                 if not MEMORY[addr] then return nil, false, Error("memory error", "address "..str(addr).." doesn't exists", node.pr:copy()) end
                 return MEMORY[addr]
             end

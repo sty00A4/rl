@@ -1,2 +1,2 @@
-list is { "I", "like", "you" }
-return list.join(" ")
+string is "I like you"
+return string.split(" ")
