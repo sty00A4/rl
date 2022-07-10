@@ -529,7 +529,7 @@ local function parse(tokens)
             local start, stop = tok.pr.start:copy(), tok.pr.stop:copy()
             advance()
             local list = {}
-            while tok ~= Token("eof") do
+            while tok ~= Token("eof") and tok ~= Token("list","out") do
                 while tok.type == "nl" do advance() end
                 local node, err = expr() if err then return nil, err end
                 stop = tok.pr.stop:copy()
@@ -920,21 +920,23 @@ local MEMORY MEMORY = Memory({
         local _, err = scopes:setAddr(node, args[1].value, args[2].value, MEMORY) if err then return nil, false, err end
         return Null()
     end, Type("null")),
-    -- push
-    LuaFunc({ "list", "value" }, { Type("list") }, { }, function(_, node, args)
+    -- LIST push
+    LuaFunc({ "list", "value" }, { Type("list") }, { }, function(_, _, args)
         push(args[1].values, args[2]:copy())
         return args[1]:copy()
     end, Type("list")),
-    -- pop
-    LuaFunc({ "list", "index" }, { Type("list"), Type("number") }, { index=Number(-1) }, function(_, node, args)
+    -- LIST pop
+    LuaFunc({ "list", "index" }, { Type("list"), Type("number") }, { index=Number(-1) }, function(_, _, args)
         if args[2].value < 0 then args[2].value = #args[1].values + 1 + args[2].value end
         local value = pop(args[1].values, args[2].value)
         return value:copy()
     end),
+    -- LIST join
+    LuaFunc({ "list", "string" }, { Type("list"), Type("string") }, { string=String("") }, function(_, _, args)
+        return String((args[2].value):join(args[1].values))
+    end, Type("string")),
 })
-local ListFuncs = {
-    push = 6, pop = 7
-}
+local ListFuncs = { push = 6, pop = 7, join = 8 }
 memStart = #MEMORY+1
 local function Scope(vars, label)
     if not label then label = "<sub>" end
@@ -1132,7 +1134,7 @@ local function interpret(ast)
             if type(head) == "List" then
                 index = node.args[3].args[1].value
                 addr = ListFuncs[index]
-                if addr == nil then return nil, false, Error("index error", "index '"..index.."' is not in '"..head.name.."'", node.pr:copy()) end
+                if addr == nil then return nil, false, Error("index error", "index '"..index.."' is not a list function", node.pr:copy()) end
                 if not MEMORY[addr] then return nil, false, Error("memory error", "address "..str(addr).." doesn't exists", node.pr:copy()) end
                 return MEMORY[addr]
             end

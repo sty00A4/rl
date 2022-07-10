@@ -1,1 +1,2 @@
-return "list" as List
+list is { "I", "like", "you" }
+return list.join(" ")
