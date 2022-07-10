@@ -817,9 +817,9 @@ Func = function(vars, varTypes, values, body, returnType)
             end }
     )
 end
-LuaFunc = function(vars, varTypes, func, returnType)
+LuaFunc = function(vars, varTypes, values, func, returnType)
     return setmetatable(
-            { vars = vars, varTypes = varTypes, func = func, returnType = returnType, copy = function(s) return LuaFunc(copy(s.vars), s.func) end,
+            { vars = vars, varTypes = varTypes, values = values, func = func, returnType = returnType, copy = function(s) return LuaFunc(copy(s.vars), s.func) end,
               toString = function(s) return String(str(s)) end,
               toBool = function() return Bool(true) end,
               toType = function() return Type("luaFunc") end
@@ -888,38 +888,54 @@ end
 local memStart
 local MEMORY MEMORY = Memory({
     -- print
-    LuaFunc({ "value" }, { }, function(_, _, args)
+    LuaFunc({ "value" }, { }, { }, function(_, _, args)
         print(str(args[1]))
         return Null()
     end, Type("null")),
     -- debugMem
-    LuaFunc({ }, {}, function()
+    LuaFunc({ }, { }, { }, function()
         print("\n- memory -")
         for i = memStart, #MEMORY do print(i, str(MEMORY[i],true)) end
         print()
         return Null()
     end, Type("null")),
     -- debugScopes
-    LuaFunc({ }, {}, function(scopes)
+    LuaFunc({ }, { }, { }, function(scopes)
         print("- scopes -", table.entries(scopes.scopes))
         for i, scope in ipairs(scopes.scopes) do if i ~= table.entries(scopes.scopes) then print(i, scope.label, str(scope.vars)) end end
         print()
         return Null()
     end, Type("null")),
     -- fromAddr
-    LuaFunc({ "addr" }, { Type("number") }, function(_, node, args)
+    LuaFunc({ "addr" }, { Type("number") }, { }, function(_, node, args)
         if type(args[1]) ~= "Number" then return nil, false, Error("lua func error", "expected Number as #1 argument", node.pr:copy()) end
         if not MEMORY[math.floor(args[1].value)] then return nil, false, Error("lua func error", "memory addres "..str(args[1]).." doesn't exist", node.pr:copy()) end
         return MEMORY[math.floor(args[1].value)]:copy()
     end),
     -- setAddr
-    LuaFunc({ "var", "addr" }, { Type("string"), Type("number") }, function(scopes, node, args)
+    LuaFunc({ "var", "addr" }, { Type("string"), Type("number") }, { }, function(scopes, node, args)
         if type(args[1]) ~= "String" then return nil, false, Error("lua func error", "expected String as #1 argument", node.pr:copy()) end
         if type(args[2]) ~= "Number" then return nil, false, Error("lua func error", "expected Number as #2 argument", node.pr:copy()) end
         local _, err = scopes:setAddr(node, args[1].value, args[2].value, MEMORY) if err then return nil, false, err end
         return Null()
     end, Type("null")),
+    -- push
+    LuaFunc({ "list", "value" }, { Type("string"), Type("number") }, { }, function(_, node, args)
+        if type(args[1]) ~= "List" then return nil, false, Error("lua func error", "expected String as #1 argument", node.pr:copy()) end
+        push(args[1].values, args[2]:copy())
+        return args[1]:copy()
+    end, Type("list")),
+    -- pop
+    LuaFunc({ "list", "index" }, { Type("string"), Type("number") }, { index=Number(-1) }, function(_, node, args)
+        if type(args[1]) ~= "List" then return nil, false, Error("lua func error", "expected String as #1 argument", node.pr:copy()) end
+        if args[2].value < 0 then args[2].value = #args[1].values + 1 + args[2].value end
+        local value = pop(args[1].values, args[2].value)
+        return value:copy()
+    end),
 })
+local ListFuncs = {
+    push = 6, pop = 7
+}
 memStart = #MEMORY+1
 local function Scope(vars, label)
     if not label then label = "<sub>" end
@@ -1103,16 +1119,26 @@ local function interpret(ast)
             if not castValue then return nil, false, Error("cast error", "cannot cast "..type(value).." to "..typeOfType(type_), node.pr:copy()) end
             return castValue
         end,
+        --TODO: string and list functions
         index = function(node)
             if node.args[3].name ~= "name" then return nil, false, Error("index error", "expected name", node.args[3].pr:copy()) end
             local head, index, addr, err
             head, _, err = visit(node.args[2]) if err then return nil, false, err end
-            if type(head) ~= "Struct" then return nil, false, Error("index error", "cannot index "..type(head), node.args[2].pr:copy()) end
-            index = node.args[3].args[1].value
-            addr = head.varAddrs[index]
-            if addr == nil then return nil, false, Error("index error", "index '"..index.."' is not in '"..head.name.."'", node.pr:copy()) end
-            if not MEMORY[addr] then return nil, false, Error("memory error", "address "..str(addr).." doesn't exists", node.pr:copy()) end
-            return MEMORY[addr]
+            if type(head) == "Struct" then
+                index = node.args[3].args[1].value
+                addr = head.varAddrs[index]
+                if addr == nil then return nil, false, Error("index error", "index '"..index.."' is not in '"..head.name.."'", node.pr:copy()) end
+                if not MEMORY[addr] then return nil, false, Error("memory error", "address "..str(addr).." doesn't exists", node.pr:copy()) end
+                return MEMORY[addr]
+            end
+            if type(head) == "List" then
+                index = node.args[3].args[1].value
+                addr = ListFuncs[index]
+                if addr == nil then return nil, false, Error("index error", "index '"..index.."' is not in '"..head.name.."'", node.pr:copy()) end
+                if not MEMORY[addr] then return nil, false, Error("memory error", "address "..str(addr).." doesn't exists", node.pr:copy()) end
+                return MEMORY[addr]
+            end
+            return nil, false, Error("index error", "cannot index "..type(head), node.args[2].pr:copy())
         end,
         indexAddr = function(node)
             if node.args[3].name ~= "name" then return nil, false, Error("index error", "expected name", node.args[3].pr:copy()) end
@@ -1416,6 +1442,7 @@ local function interpret(ast)
                 return value
             end
             if type(func) == "LuaFunc" then
+                if selfCall then push(args, MEMORY[headAddr]) end
                 for _, arg in ipairs(node.args[2]) do
                     local value
                     value, __, err = visit(arg) if err then return nil, false, err end
@@ -1426,7 +1453,10 @@ local function interpret(ast)
                 scopes = stdScope()
                 scopes:new(Scope({}, "lua-func"))
                 for i, var in ipairs(func.vars) do
-                    if not args[i] then return nil, false, Error("func error", "too few arguments", node.pr:copy()) end
+                    if not args[i] then
+                        if not func.values[var] then return nil, false, Error("func error", "too few arguments", node.pr:copy()) end
+                        args[i], _, err = func.values[var] if err then return nil, false, err end
+                    end
                     _, err = scopes:set(var, args[i], MEMORY) if err then return nil, false, err end
                 end
                 value, _, err = func.func(scopes, node, args) if err then return nil, false, err end
