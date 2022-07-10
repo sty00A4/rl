@@ -1119,7 +1119,6 @@ local function interpret(ast)
             if not castValue then return nil, false, Error("cast error", "cannot cast "..type(value).." to "..typeOfType(type_), node.pr:copy()) end
             return castValue
         end,
-        --TODO: string and list functions
         index = function(node)
             if node.args[3].name ~= "name" then return nil, false, Error("index error", "expected name", node.args[3].pr:copy()) end
             local head, index, addr, err
@@ -1156,17 +1155,21 @@ local function interpret(ast)
             index, _, err = visit(node.args[2]) if err then return nil, false, err end
             if type(list) == "List" then
                 if type(index) == "Number" then
+                    if index.value < 0 then index.value = #list.values + index.value end
                     local value = list.values[math.floor(index.value)+1]
                     if value == nil then return nil, false, Error("index error", "index out of range", node.pr:copy()) end
                     return value:copy()
                 end
                 if type(index) == "Range" then
-                    local value = List(sub(list.values, index.start+1, index.stop+1))
+                    local min, max = index.start, index.stop
+                    if min < 0 then min = #list.values + min end if max < 0 then max = #list.values + max end
+                    local value = List(sub(list.values, min+1, max+1))
                     return value:copy()
                 end
             end
             if type(list) == "Range" then
                 if type(index) == "Number" then
+                    if index.value < 0 then index.value = #list:toList().values + index.value end
                     local value = list:toList().values[math.floor(index.value)+1]
                     if value == nil then return nil, false, Error("index error", "index out of range", node.pr:copy()) end
                     return value:copy()
@@ -1540,7 +1543,7 @@ local function interpret(ast)
         return nodes.notImplemented(node)
     end
     if not ast then return Null() end
-    local value, returning, err = visit(ast) if err then return nil, false, err end
+    local value, _, err = visit(ast) if err then return nil, false, err end
     if not getmetatable(value) then return nil, false, Error("dev error", "value returned is not a metatable") end
     return value
 end
