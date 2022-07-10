@@ -920,14 +920,12 @@ local MEMORY MEMORY = Memory({
         return Null()
     end, Type("null")),
     -- push
-    LuaFunc({ "list", "value" }, { Type("string") }, { }, function(_, node, args)
-        if type(args[1]) ~= "List" then return nil, false, Error("lua func error", "expected String as #1 argument", node.pr:copy()) end
+    LuaFunc({ "list", "value" }, { Type("list") }, { }, function(_, node, args)
         push(args[1].values, args[2]:copy())
         return args[1]:copy()
     end, Type("list")),
     -- pop
-    LuaFunc({ "list", "index" }, { Type("string"), Type("number") }, { index=Number(-1) }, function(_, node, args)
-        if type(args[1]) ~= "List" then return nil, false, Error("lua func error", "expected String as #1 argument", node.pr:copy()) end
+    LuaFunc({ "list", "index" }, { Type("list"), Type("number") }, { index=Number(-1) }, function(_, node, args)
         if args[2].value < 0 then args[2].value = #args[1].values + 1 + args[2].value end
         local value = pop(args[1].values, args[2].value)
         return value:copy()
