@@ -940,9 +940,10 @@ local MEMORY MEMORY = Memory({
         return List(split(args[1].value, args[2].value))
     end, Type("list")),
 })
-local ListFuncs = { push = 6, pop = 7, join = 8 }
-local StringFuncs = { split = 9 }
-memStart = #MEMORY+1
+memStart = 5
+local function iotaMem() memStart = memStart+1 return memStart end
+local ListFuncs = { push = iotaMem(), pop = iotaMem(), join = iotaMem() }
+local StringFuncs = { split = iotaMem() }
 local function Scope(vars, label)
     if not label then label = "<sub>" end
     if not vars then vars = {} end
