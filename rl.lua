@@ -1189,7 +1189,16 @@ local function interpret(ast)
                 MEMORY[addr] = value:copy()
                 return value
             elseif node.args[1].name == "name" then
-                local addr addr, err = scopes:set(node.args[1], value, MEMORY) if err then return nil, false, err end
+                _, err = scopes:set(node.args[1], value, MEMORY) if err then return nil, false, err end
+                return value
+            elseif node.args[1].name == "idxList" then
+                if node.args[1].args[1].name ~= "name" then return nil, false, Error("assign error", "expected name", node.args[1].args[1].pr:copy()) end
+                local list list, _, err = visit(node.args[1].args[1]) if err then return nil, false, err end
+                if type(list) ~= "List" then return nil, false, Error("index error", "expected List, got "..typeOfType(list), node.args[1].args[1].pr:copy()) end
+                local index index, _, err = visit(node.args[1].args[2]) if err then return nil, false, err end
+                if type(index) ~= "Number" then return nil, false, Error("index error", "expected Number, got "..typeOfType(index), node.args[1].args[2].pr:copy()) end
+                list.values[math.floor(index.value)+1] = value
+                _, err = scopes:set(node.args[1].args[1], list, MEMORY) if err then return nil, false, err end
                 return value
             end
             return nil, false, Error("assign error", "expected name or index", node.args[1].pr:copy())
@@ -1443,7 +1452,7 @@ local function interpret(ast)
                     local dir = 1 if iterator.start > iterator.stop then dir = -1 end
                     for i = iterator.start, iterator.stop, dir do
                         scopes:new(Scope())
-                        scopes:set(opNode, Number(i), MEMORY)
+                        _, err = scopes:set(opNode, Number(i), MEMORY) if err then return nil, false, err end
                         local value value, _, err = visit(left) if err then return nil, false, err end
                         push(values, value)
                         scopes:drop()
@@ -1457,7 +1466,7 @@ local function interpret(ast)
                 if type(iterator) == "List" then
                     for i, x in ipairs(iterator.values) do
                         scopes:new(Scope({}, "iterator"))
-                        scopes:set(opNode, x:copy(), MEMORY)
+                        _, err = scopes:set(opNode, x:copy(), MEMORY) if err then return nil, false, err end
                         local value value, _, err = visit(left) if err then return nil, false, err end
                         push(values, value)
                         scopes:drop()
@@ -1531,7 +1540,7 @@ local function interpret(ast)
                 local dir = 1 if iterator.start > iterator.stop then dir = -1 end
                 for i = iterator.start, iterator.stop, dir do
                     scopes:new(Scope())
-                    scopes:set(nameNode, Number(i), MEMORY)
+                    _, err = scopes:set(nameNode, Number(i), MEMORY) if err then return nil, false, err end
                     value, returning, err = visit(bodyNode, "forOf", true, true) if err then return nil, false, err end
                     scopes:drop()
                     if returning then
@@ -1548,7 +1557,7 @@ local function interpret(ast)
             if type(iterator) == "List" then
                 for i, x in ipairs(iterator.values) do
                     scopes:new(Scope({}, "iterator"))
-                    scopes:set(nameNode, x:copy(), MEMORY)
+                    _, err = scopes:set(nameNode, x:copy(), MEMORY) if err then return nil, false, err end
                     value, returning, err = visit(bodyNode, "forOf", true, true) if err then return nil, false, err end
                     scopes:drop()
                     if returning then
@@ -1569,7 +1578,7 @@ local function interpret(ast)
                 if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[6].pr:copy()) end
             end
             local func = Func(node.args[2], node.args[3], node.args[4], node.args[5], type_)
-            if node.args[1] then scopes:set(node.args[1], func, MEMORY) if err then return nil, false, err end end
+            if node.args[1] then _, err = scopes:set(node.args[1], func, MEMORY) if err then return nil, false, err end end
             return func
         end,
         call = function(node)
@@ -1710,7 +1719,7 @@ local function interpret(ast)
                 local funcName = funcNode.args[1].args[1].value
                 funcs[funcName] = funcNode
             end
-            scopes:set(name,StructDef(name, vars, funcs),MEMORY)
+            _, err = scopes:set(name,StructDef(name, vars, funcs),MEMORY) if err then return nil, false, err end
             return scopes:get(name, MEMORY)
         end
     }
