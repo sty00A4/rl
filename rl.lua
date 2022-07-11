@@ -809,8 +809,7 @@ String = function(str_)
               end,
               toString = function(s) return s:copy() end,
               toBool = function(s)
-                  if s.value == "true" then return Bool(true) end
-                  if s.value == "false" then return Bool(false) end
+                  return Bool(#s.value ~= 0)
               end,
               toList = function(s)
                   local list = {}
@@ -1013,7 +1012,9 @@ local MEMORY MEMORY = Memory({
     end, Type("string")),
     -- STRING split
     LuaFunc({ "string", "sep" }, { Type("string"), Type("string") }, { }, function(_, _, args)
-        return List(split(args[1].value, args[2].value))
+        local list = split(args[1].value, args[2].value)
+        for i = 1, #list do list[i] = String(list[i]) end
+        return List(list)
     end, Type("list")),
 })
 memStart = 5
@@ -1361,6 +1362,9 @@ local function interpret(ast)
                 if opTok.value == "or" then
                     if type(left) == "Bool" and type(right) == "Bool" then
                         return Bool(left.value or right.value)
+                    else
+                        if left.toBool then if left:toBool().value then return left:copy()
+                        else return right:copy() end end
                     end
                 end
                 if opTok.value == "xor" then
@@ -1708,9 +1712,9 @@ local function interpret(ast)
         return nodes.notImplemented(node)
     end
     if not ast then return Null() end
-    local value, _, err = visit(ast) if err then return nil, false, err end
+    local value, returning, err = visit(ast) if err then return nil, false, err end
     if not getmetatable(value) then return nil, false, Error("dev error", "value returned is not a metatable") end
-    return value
+    return value, returning
 end
 
 return {
