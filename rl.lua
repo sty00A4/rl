@@ -118,7 +118,7 @@ local words = {
         ["return"] = "return", ["and"] = "and", ["or"] = "or", ["xor"] = "xor", ["not"] = "not",
         ["end"] = "end", ["if"] = "if", ["else"] = "else", ["elif"] = "elif", ["while"] = "while",
         ["for"] = "for", of = "of", func = "func", ["break"] = "break", skip = "skip",
-        struct = "struct",
+        struct = "struct", switch = "switch", default = "default"
     },
     bool = { "true", "false" },
     null = "null",
@@ -344,7 +344,7 @@ local function parse(tokens)
     local function advance() idx=idx+1 update() end
     advance()
     local statements, statement, expr, typecast, logic, comp, contain, range, arith, term, factor, power, call, safe,
-    idxList, addr, index, atom, ifExpr, whileExpr, forExpr, func, anonFunc, struct
+    idxList, addr, index, atom, ifExpr, whileExpr, forExpr, func, anonFunc, struct, switch
     local function binOp(f1, ops, f2)
         if not f2 then f2 = f1 end
         local start, stop = tok.pr.start:copy(), tok.pr.stop:copy()
@@ -359,6 +359,33 @@ local function parse(tokens)
             left = Node("binOp", { opTok, left, right }, PositionRange(start, stop))
         end
         return left
+    end
+    switch = function()
+        local start = tok.pr.start:copy()
+        advance()
+        local node, cases, bodies, case, body, default, err = nil, {}, {}
+        node, err = expr() if err then return nil, err end
+        if tok ~= Token("nl") then return nil, Error("syntax error", "expected new line", tok.pr:copy()) end
+        while tok == Token("nl") do advance() end
+        while tok ~= Token("kw","end") do
+            if tok == Token("kw","default") then
+                advance()
+                default, err = statement() if err then return nil, err end
+                while tok == Token("nl") do advance() end
+                if tok ~= Token("kw","end") then return nil, Error("syntax error", "expected '"..words.kw["end"].."'", tok.pr:copy()) end
+                break
+            end
+            case, err = expr() if err then return nil, err end
+            push(cases, case)
+            if tok ~= Token("rep") then return nil, Error("syntax error", "expected '"..symbols.rep.."'", tok.pr:copy()) end
+            advance()
+            body, err = statement() if err then return nil, err end
+            push(bodies, body)
+            while tok == Token("nl") do advance() end
+        end
+        local stop = tok.pr.stop:copy()
+        advance()
+        return Node("switch",{ node, cases, bodies, default },PositionRange(start, stop))
     end
     struct = function()
         local start= tok.pr.start:copy()
@@ -731,6 +758,7 @@ local function parse(tokens)
         if tok == Token("kw","break") then local tok_=tok:copy() advance() return Node("break",{ tok_:copy() },tok_.pr:copy()) end
         if tok == Token("kw","skip") then local tok_=tok:copy() advance() return Node("skip",{ tok_:copy() },tok_.pr:copy()) end
         if tok == Token("kw","struct") then return struct() end
+        if tok == Token("kw","switch") then return switch() end
         local node, err = expr() if err then return nil, err end
         if tok == Token("kw","assign") then
             advance()
@@ -1721,6 +1749,16 @@ local function interpret(ast)
             end
             _, err = scopes:set(name,StructDef(name, vars, funcs),MEMORY) if err then return nil, false, err end
             return scopes:get(name, MEMORY)
+        end,
+        switch = function(node)
+            local valueNode, cases, bodies, default = table.unpack(node.args)
+            local value, _, err = visit(valueNode) if err then return nil, false, err end
+            for i, caseNode in ipairs(cases) do
+                local case case, _, err = visit(caseNode) if err then return nil, false, err end
+                if eq(value, case).value then return visit(bodies[i]) end
+            end
+            if default then return visit(default) end
+            return Null()
         end
     }
     visit = function(node, ...)
