@@ -690,6 +690,19 @@ local function parse(tokens)
             local stop = tok.pr.stop:copy()
             return Node("ternOp",{ opTok, opNode, left, right },PositionRange(start, stop))
         end
+        if tok == Token("kw","for") then
+            local opTok = tok:copy()
+            advance()
+            local opNode opNode, err = expr() if err then return nil, err end
+            if tok == Token("kw","of") then
+                advance()
+                local right right, err = expr() if err then return nil, err end
+                local stop = tok.pr.stop:copy()
+                return Node("ternOp",{ opTok, opNode, left, right },PositionRange(start, stop))
+            end
+            local stop = tok.pr.stop:copy()
+            return Node("binOp",{ opTok, left, opNode },PositionRange(start, stop))
+        end
         return left
     end
     statement = function()
@@ -1371,6 +1384,25 @@ local function interpret(ast)
                     end
                 end
                 if opTok.value == "cast" then return nodes.cast(node) end
+                if opTok.value == "for" then
+                    if type(right) == "Range" then
+                        local values = {}
+                        local dir = 1 if right.start > right.stop then dir = -1 end
+                        for i = right.start, right.stop, dir do
+                            local value value, _, err = visit(node.args[2]) if err then return nil, false, err end
+                            push(values, value)
+                        end
+                        return List(values)
+                    end
+                    if type(right) == "Number" then
+                        local values = {}
+                        for i = 1, right.value do
+                            local value value, _, err = visit(node.args[2]) if err then return nil, false, err end
+                            push(values, value)
+                        end
+                        return List(values)
+                    end
+                end
             end
             local name = opTok.type
             if opTok.value then name = opTok.value end
@@ -1391,6 +1423,36 @@ local function interpret(ast)
                 if not opValue.toBool then return nil, false, Error("cast error", "cannot cast "..typeOfType(opValue).." to Bool", opNode.pr:copy()) end
                 if opValue:toBool().value then return visit(left) end
                 return visit(right)
+            end
+            if opTok == Token("kw","for") then
+                if opNode.name ~= "name" then return nil, false, Error("iteration error", "expected name", opNode.pr:copy()) end
+                local iterator, _, err = visit(right) if err then return nil, false, err end
+                local values = {}
+                if type(iterator) == "Range" then
+                    local dir = 1 if iterator.start > iterator.stop then dir = -1 end
+                    for i = iterator.start, iterator.stop, dir do
+                        scopes:new(Scope())
+                        scopes:set(opNode, Number(i), MEMORY)
+                        local value value, _, err = visit(left) if err then return nil, false, err end
+                        push(values, value)
+                        scopes:drop()
+                    end
+                    return List(values)
+                end
+                if type(iterator) ~= "List" then
+                    if not iterator.toList then return nil, false, Error("value error", "cannot cast "..type(iterator).." to List", iterNode.pr:copy()) end
+                    iterator = iterator:toList()
+                end
+                if type(iterator) == "List" then
+                    for i, x in ipairs(iterator.values) do
+                        scopes:new(Scope({}, "iterator"))
+                        scopes:set(opNode, x:copy(), MEMORY)
+                        local value value, _, err = visit(left) if err then return nil, false, err end
+                        push(values, value)
+                        scopes:drop()
+                    end
+                    return List(values)
+                end
             end
             local name = opTok.type
             if opTok.value then name = opTok.value end
