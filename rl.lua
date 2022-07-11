@@ -681,13 +681,14 @@ local function parse(tokens)
         local start = tok.pr.start:copy()
         local left, err = logic() if err then return nil, err end
         if tok == Token("kw","if") then
+            local opTok = tok:copy()
             advance()
             local opNode opNode, err = expr() if err then return nil, err end
             if tok ~= Token("kw","else") then return nil, Error("syntax error", "expected '"..words.kw["else"].."'", tok.pr:copy()) end
             advance()
             local right right, err = expr() if err then return nil, err end
             local stop = tok.pr.stop:copy()
-            return Node("ternOp",{ opNode, left, right },PositionRange(start, stop))
+            return Node("ternOp",{ opTok, opNode, left, right },PositionRange(start, stop))
         end
         return left
     end
@@ -1384,10 +1385,16 @@ local function interpret(ast)
             end
         end,
         ternOp = function(node)
-            local opValue, _, err = visit(node.args[1]) if err then return nil, false, err end
-            if not opValue.toBool then return nil, false, Error("cast error", "cannot cast "..typeOfType(opValue).." to Bool", node.args[1].pr:copy()) end
-            if opValue:toBool().value then return visit(node.args[2]) end
-            return visit(node.args[3])
+            local opTok, opNode, left, right = node.args[1], node.args[2], node.args[3], node.args[4]
+            if opTok == Token("kw","if") then
+                local opValue, _, err = visit(opNode) if err then return nil, false, err end
+                if not opValue.toBool then return nil, false, Error("cast error", "cannot cast "..typeOfType(opValue).." to Bool", opNode.pr:copy()) end
+                if opValue:toBool().value then return visit(left) end
+                return visit(right)
+            end
+            local name = opTok.type
+            if opTok.value then name = opTok.value end
+            return nil, false, Error("operation error", "ternary operation '"..name.."' cannot be performed", node.pr:copy())
         end,
         body = function(node, name, breakable, skippable)
             scopes:new(Scope(nil, name))
