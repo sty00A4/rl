@@ -24,7 +24,7 @@
             <Keywords name="Folders in comment, open"></Keywords>
             <Keywords name="Folders in comment, middle"></Keywords>
             <Keywords name="Folders in comment, close"></Keywords>
-            <Keywords name="Keywords1">is inc dec with return end if else elif func for while struct break skip switch default assert object new</Keywords>
+            <Keywords name="Keywords1">is inc dec with return end if else elif func for while struct break skip switch default assert object new const use</Keywords>
             <Keywords name="Keywords2">true false null</Keywords>
             <Keywords name="Keywords3">Number String Bool Type Null List Range Func LuaFunc StructDef</Keywords>
             <Keywords name="Keywords4">print debugMem debugScopes fromAddr setAddr addr len</Keywords>
