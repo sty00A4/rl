@@ -344,7 +344,7 @@ local function parse(tokens)
     local function advance() idx=idx+1 update() end
     advance()
     local statements, statement, expr, typecast, logic, comp, contain, range, arith, term, factor, power, call, safe,
-    idxList, addr, index, atom, ifExpr, whileExpr, forExpr, func, struct
+    idxList, addr, index, atom, ifExpr, whileExpr, forExpr, func, anonFunc, struct
     local function binOp(f1, ops, f2)
         if not f2 then f2 = f1 end
         local start, stop = tok.pr.start:copy(), tok.pr.stop:copy()
@@ -464,6 +464,52 @@ local function parse(tokens)
         advance()
         return Node("if", { condNodes, bodyNodes, elseNode }, PositionRange(start, stop))
     end
+    anonFunc = function()
+        local start, stop = tok.pr.start:copy(), tok.pr.stop:copy()
+        local vars, varTypes, values, mustAssign, body, type_, err = {}, {}, {}, false
+        advance()
+        if tok ~= Token("eval","in") then return nil, Error("syntax error", "expected '"..delimiters.eval[1].."'", tok.pr:copy()) end
+        advance()
+        while true do
+            local var, varType, value
+            var, err = atom() if err then return nil, err end
+            if var.name ~= "name" then return nil, Error("syntax error", "expected name, got "..str(var.name), var.pr:copy()) end
+            push(vars, var)
+            if tok == Token("rep") then
+                advance()
+                varType, err = atom() if err then return nil, err end
+                if varType.name ~= "name" and varType.name ~= "type" then return nil, Error("syntax error", "expected name, got "..str(varType.name), varType.pr:copy()) end
+                varTypes[var.args[1].value] = varType
+            end
+            if tok == Token("kw","assign") then
+                mustAssign = true
+                advance()
+                value, err = expr() if err then return nil, err end
+                values[var.args[1].value] = value
+            else if mustAssign then return nil, Error("syntax error", "expected assignment of name", tok.pr:copy()) end end
+            if tok == Token("eval","out") then advance() break end
+            if tok ~= Token("sep") then return nil, Error("syntax error", "expected '"..symbols.sep.."'", tok.pr:copy()) end
+            advance()
+        end
+        if tok == Token("into") then
+            advance()
+            type_, err = atom() if err then return nil, err end
+            if type_.name ~= "type" and type_.name ~= "name" then return nil, Error("syntax error", "expected type, got "..str(type_.name), type_.pr:copy()) end
+        end
+        if tok == Token("nl") then
+            while tok == Token("nl") do advance() end
+            body, err = statements({ Token("kw","end") }) if err then return nil, err end
+            if tok ~= Token("kw","end") then return nil, Error("syntax error", "expected '"..words.kw["end"].."'", tok.pr:copy()) end
+            stop = tok.pr.stop:copy()
+            advance()
+            return Node("func",{ nil, vars, varTypes, values, body, type_ },PositionRange(start, stop))
+        end
+        body, err = expr() if err then return nil, err end
+        if tok ~= Token("kw","end") then return nil, Error("syntax error", "expected '"..words.kw["end"].."'", tok.pr:copy()) end
+        stop = tok.pr.stop:copy()
+        advance()
+        return Node("func",{ nil, vars, varTypes, values, body, type_ },PositionRange(start, stop))
+    end
     func = function()
         local start, stop = tok.pr.start:copy(), tok.pr.stop:copy()
         advance()
@@ -507,7 +553,9 @@ local function parse(tokens)
             return Node("func",{ name, vars, varTypes, values, body, type_ },PositionRange(start, stop))
         end
         body, err = expr() if err then return nil, err end
+        if tok ~= Token("kw","end") then return nil, Error("syntax error", "expected '"..words.kw["end"].."'", tok.pr:copy()) end
         stop = tok.pr.stop:copy()
+        advance()
         return Node("func",{ name, vars, varTypes, values, body, type_ },PositionRange(start, stop))
     end
     atom = function()
@@ -542,6 +590,7 @@ local function parse(tokens)
             advance()
             return Node("list", list, PositionRange(start, stop))
         end
+        if tok_ == Token("kw","func") then return anonFunc() end
         return nil, Error("syntax error", "expected number/bool/string/type/name/null", tok.pr:copy())
     end
     index = function() return binOp(atom, { Token("index") }) end
@@ -1421,7 +1470,7 @@ local function interpret(ast)
                 if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[6].pr:copy()) end
             end
             local func = Func(node.args[2], node.args[3], node.args[4], node.args[5], type_)
-            local addr addr, err = scopes:set(node.args[1], func, MEMORY) if err then return nil, false, err end
+            if node.args[1] then scopes:set(node.args[1], func, MEMORY) if err then return nil, false, err end end
             return func
         end,
         call = function(node)
@@ -1449,7 +1498,7 @@ local function interpret(ast)
                     if func.varTypes[var.args[1].value] and args[i] then
                         local type_ type_, _, err = visit(func.varTypes[var.args[1].value]) if err then return nil, false, err end
                         if typeOfType(type_) ~= typeOfType(args[i]) then
-                            return nil, false, Error("func error","type mismatch for argument #"..str(i)..", "..tostring(typeOfType(args[i])).." and "..tostring(typeOfType(type_)),node.pr:copy())
+                            return nil, false, Error("func error","type mismatch for argument #"..str(i)..", got "..tostring(typeOfType(args[i])).." expected "..tostring(typeOfType(type_)),node.pr:copy())
                         end
                     end
                 end

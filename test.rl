@@ -1,2 +1,2 @@
-string is "I like you"
-return string.split(" ")
+add is func(a:Number, b:Number) a + b end
+return add(6, 9)
