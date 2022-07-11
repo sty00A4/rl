@@ -118,7 +118,7 @@ local words = {
         ["return"] = "return", ["and"] = "and", ["or"] = "or", ["xor"] = "xor", ["not"] = "not",
         ["end"] = "end", ["if"] = "if", ["else"] = "else", ["elif"] = "elif", ["while"] = "while",
         ["for"] = "for", of = "of", func = "func", ["break"] = "break", skip = "skip",
-        struct = "struct", switch = "switch", default = "default"
+        struct = "struct", switch = "switch", default = "default", assert = "assert"
     },
     bool = { "true", "false" },
     null = "null",
@@ -759,6 +759,13 @@ local function parse(tokens)
         if tok == Token("kw","skip") then local tok_=tok:copy() advance() return Node("skip",{ tok_:copy() },tok_.pr:copy()) end
         if tok == Token("kw","struct") then return struct() end
         if tok == Token("kw","switch") then return switch() end
+        if tok == Token("kw","assert") then
+            advance()
+            local stop = tok.pr.stop:copy()
+            local node, err = expr() if err then return nil, err end
+            stop = tok.pr.stop:copy()
+            return Node("assert", { node }, PositionRange(start, stop))
+        end
         local node, err = expr() if err then return nil, err end
         if tok == Token("kw","assign") then
             advance()
@@ -1759,7 +1766,13 @@ local function interpret(ast)
             end
             if default then return visit(default) end
             return Null()
-        end
+        end,
+        assert = function(node)
+            local value, _, err = visit(node.args[1]) if err then return value, true, err end
+            if not value.toBool then return nil, false, Error("cast error", "cannot cast "..typeOfType(value).." to Bool", node.args[1].pr:copy()) end
+            if not value:toBool().value then return nil, false, Error("assertion", "not true", node.pr:copy()) end
+            return value, true
+        end,
     }
     visit = function(node, ...)
         if not node then error("no node given", 2) end
