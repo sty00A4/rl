@@ -1,5 +1,4 @@
 features
-    object data type
     dictionary data type
     stack data type
     queue data type

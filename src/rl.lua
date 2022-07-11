@@ -119,7 +119,7 @@ local words = {
         ["end"] = "end", ["if"] = "if", ["else"] = "else", ["elif"] = "elif", ["while"] = "while",
         ["for"] = "for", of = "of", func = "func", ["break"] = "break", skip = "skip",
         struct = "struct", switch = "switch", default = "default", assert = "assert", object = "object",
-        new = "new"
+        new = "new", const = "const", use = "use",
     },
     bool = { "true", "false" },
     null = "null",
@@ -761,6 +761,7 @@ local function parse(tokens)
     end
     statement = function()
         local start = tok.pr.start:copy()
+        local const = false
         if tok == Token("kw","if") then return ifExpr() end
         if tok == Token("kw","func") then return func() end
         if tok == Token("kw","return") then
@@ -794,11 +795,34 @@ local function parse(tokens)
             stop = tok.pr.stop:copy()
             return Node("assert", { node }, PositionRange(start, stop))
         end
+        if tok == Token("kw","const") then advance() const = true end
+        if tok == Token("kw","use") then
+            local path, stop, last = "", tok.pr.stop:copy()
+            advance()
+            while tok ~= Token("nl") and tok ~= Token("eof") do
+                if tok.type == "name" then
+                    if last == "name" then return nil, Error("syntax error", "expected '"..symbols.index.."' or new line",tok.pr:copy()) end
+                    path = path .. tok.value
+                    stop = tok.pr.stop:copy()
+                    last = tok.type
+                elseif tok.type == "index" then
+                    if last == "index" then return nil, Error("syntax error", "expected name or new line",tok.pr:copy()) end
+                    path = path .. "/"
+                    stop = tok.pr.stop:copy()
+                    last = tok.type
+                else
+                    return nil, Error("syntax error", "expected name or '"..symbols.index.."'",tok.pr:copy())
+                end
+                advance()
+            end
+            if path == "" then return nil, Error("syntax error", "expected name or index") end
+            return Node("use",{ path },PositionRange(start, stop))
+        end
         local node, err = expr() if err then return nil, err end
         if tok == Token("kw","assign") then
             advance()
             local value value, err = expr() if err then return nil, err end
-            return Node("assign",{node,value},PositionRange(node.pr.start:copy(),value.pr.stop:copy()))
+            return Node("assign",{node,value,const},PositionRange(node.pr.start:copy(),value.pr.stop:copy()))
         end
         return node
     end
@@ -1015,9 +1039,9 @@ Struct = function(structName, varAddrs)
             end }
     )
 end
-ObjectDef = function(name, vars, funcs)
+ObjectDef = function(name, vars, funcs, consts)
     return setmetatable(
-            { name = name, vars = vars, funcs = funcs, copy = function(s) ObjectDef(s.name, s.vars, s.funcs) end,
+            { name = name, vars = vars, funcs = funcs, consts = consts, copy = function(s) ObjectDef(s.name, s.vars, s.funcs) end,
               toString = function(s) return String(tostring(s)) end,
               toBool = function() return Bool(true) end,
               toType = function(s) return Type(s.name) end
@@ -1031,16 +1055,19 @@ ObjectDef = function(name, vars, funcs)
             end }
     )
 end
-Object = function(objectName, varAddrs)
+Object = function(objectName, varAddrs, consts)
+    if not consts then consts = {} end
     return setmetatable(
-            { name = objectName, varAddrs = varAddrs,
+            { name = objectName, varAddrs = varAddrs, consts = consts,
               toString = function(s) return String(tostring(s)) end,
               toBool = function() return Bool(true) end,
               toType = function(s) return Type(s.name) end,
               copy = function(s)
                   local newVarAddrs = {}
                   for k, v in pairs(s.varAddrs) do newVarAddrs[k] = v end
-                  return Object(s.name, newVarAddrs)
+                  local newConsts = {}
+                  for k, v in pairs(s.consts) do newConsts[k] = v end
+                  return Object(s.name, newVarAddrs, newConsts)
               end,
               deleteAddrs = function(s, memory)
                   for _, addr in pairs(s.varAddrs) do
@@ -1060,7 +1087,7 @@ local function Memory(memory)
         return rawget(s, k)
     end })
 end
--- built-in funcitons
+-- built-in functions
 local memIota, memStart
 local MEMORY MEMORY = Memory({
     -- print
@@ -1127,13 +1154,18 @@ memIota, memStart = 6, #MEMORY + 1
 local function iotaMem() memIota = memIota+1 return memIota end
 local ListFuncs = { push = iotaMem(), pop = iotaMem(), join = iotaMem() }
 local StringFuncs = { split = iotaMem() }
-local function Scope(vars, label)
+local function Scope(vars, consts, label)
     if not label then label = "<sub>" end
     if not vars then vars = {} end
+    if not consts then consts = {} end
     return setmetatable(
-            { vars = vars, label = label, copy = function(s) return Scope(copy(s.vars)) end,
+            { vars = vars, consts = consts, label = label, copy = function(s) return Scope(s.vars, s.consts, s.label) end,
               get = function(s, name) return s.vars[name] end,
-              set = function(s, name, addr) s.vars[name] = addr end
+              set = function(s, name, addr, const)
+                  s.vars[name] = addr
+                  if const then s.consts[name] = addr end
+              end,
+              isConst = function(s, addr) return contains(s.consts, addr) end
             },
             { __name = "Scope", __tostring = function(s)
                 return "Scope("..str(s.vars)..")"
@@ -1174,7 +1206,15 @@ local function Scopes(scopes)
                     return nil, Error("name error", "address of '"..name.."' doesn't exist in memory", node.pr:copy())
                 end
                 return nil, Error("name error", "name '"..name.."' is not registered", node.pr:copy())
-            end, set = function(s, nameNode, value, memory)
+            end, isConst = function(s, addr)
+                local scope
+                for _, v in ipairs(s.scopes) do
+                    print(str(v.consts), addr, contains(v.consts, addr))
+                    if contains(v.consts, addr) then scope=v end
+                end
+                if scope then return scope:isConst(addr) end
+                return false
+            end, set = function(s, nameNode, value, memory, const)
                 local name = nameNode
                 if type(nameNode) ~= "string" then name = nameNode.args[1].value end
                 local addr, err
@@ -1183,8 +1223,14 @@ local function Scopes(scopes)
                 if not scope then
                     scope = s.scopes[#s.scopes]
                     addr, err = memory:new() if err then return nil, err end
-                else addr = scope.vars[name] end
-                scope:set(name, addr)
+                else
+                    addr = scope.vars[name]
+                    if contains(scope.consts, addr) then
+                        if type(nameNode) ~= "Node" then return nil, Error("name error", "cannot change value of constant name") end
+                        return nil, Error("name error", "cannot change value of constant name", nameNode.pr:copy())
+                    end
+                end
+                scope:set(name, addr, const)
                 memory[addr] = value
                 return addr
             end,
@@ -1282,7 +1328,7 @@ local function interpret(ast)
         assign = function(node)
             local value, _, err = visit(node.args[2]) if err then return nil, false, err end
             if node.args[1].name == "binOp" and node.args[1].args[1] == Token("index") then
-                local addr addr, _, err = nodes.indexAddr(node.args[1]) if err then return nil, false, err end
+                local addr addr, _, err = nodes.indexAddr(node.args[1], true) if err then return nil, false, err end
                 addr = addr.value
                 if typeOfType(MEMORY[addr]) ~= typeOfType(value) then
                     return nil, false, Error("value error", "expected "..typeOfType(MEMORY[addr])..", got "..typeOfType(value), node.args[2].pr:copy())
@@ -1290,7 +1336,7 @@ local function interpret(ast)
                 MEMORY[addr] = value:copy()
                 return value
             elseif node.args[1].name == "name" then
-                _, err = scopes:set(node.args[1], value, MEMORY) if err then return nil, false, err end
+                _, err = scopes:set(node.args[1], value, MEMORY, node.args[3]) if err then return nil, false, err end
                 return value
             elseif node.args[1].name == "idxList" then
                 if node.args[1].args[1].name ~= "name" then return nil, false, Error("assign error", "expected name", node.args[1].args[1].pr:copy()) end
@@ -1354,13 +1400,14 @@ local function interpret(ast)
             end
             return nil, false, Error("index error", "cannot index "..type(head), node.args[2].pr:copy())
         end,
-        indexAddr = function(node)
+        indexAddr = function(node, checkConst)
             if node.args[3].name ~= "name" then return nil, false, Error("index error", "expected name", node.args[3].pr:copy()) end
             local head, index, addr, err
             head, _, err = visit(node.args[2]) if err then return nil, false, err end
-            if type(head) ~= "Struct" then return nil, false, Error("index error", "cannot index "..type(head), node.args[2].pr:copy()) end
+            if type(head) ~= "Struct" and type(head) ~= "Object" then return nil, false, Error("index error", "cannot index "..type(head), node.args[2].pr:copy()) end
             index = node.args[3].args[1].value
             addr = head.varAddrs[index]
+            if checkConst then if head.consts[index] then return nil, false, Error("name error", "cannot change value of constant name", node.pr:copy()) end end
             if addr == nil then return nil, false, Error("index error", "index '"..index.."' is not in '"..head.name.."'", node.pr:copy()) end
             return Number(addr)
         end,
@@ -1573,7 +1620,7 @@ local function interpret(ast)
                 end
                 if type(iterator) == "List" then
                     for i, x in ipairs(iterator.values) do
-                        scopes:new(Scope({}, "iterator"))
+                        scopes:new(Scope(nil, nil, "iterator"))
                         _, err = scopes:set(opNode, x:copy(), MEMORY) if err then return nil, false, err end
                         local value value, _, err = visit(left) if err then return nil, false, err end
                         push(values, value)
@@ -1587,7 +1634,7 @@ local function interpret(ast)
             return nil, false, Error("operation error", "ternary operation '"..name.."' cannot be performed", node.pr:copy())
         end,
         body = function(node, name, breakable, skippable)
-            scopes:new(Scope(nil, name))
+            scopes:new(Scope(nil, nil, name))
             for _, n in ipairs(node.args) do
                 local value, returning, err = visit(n) if err then return nil, false, err end
                 if returning then
@@ -1664,7 +1711,7 @@ local function interpret(ast)
             end
             if type(iterator) == "List" then
                 for i, x in ipairs(iterator.values) do
-                    scopes:new(Scope({}, "iterator"))
+                    scopes:new(Scope(nil, nil, "iterator"))
                     _, err = scopes:set(nameNode, x:copy(), MEMORY) if err then return nil, false, err end
                     value, returning, err = visit(bodyNode, "forOf", true, true) if err then return nil, false, err end
                     scopes:drop()
@@ -1720,7 +1767,7 @@ local function interpret(ast)
                     end
                 end
                 scopes = stdScope()
-                scopes:new(Scope({}, "func"))
+                scopes:new(Scope(nil, nil, "func"))
                 scopes.scopes[#scopes.scopes].vars["self"] = headAddr
                 for i, var in ipairs(func.vars) do
                     if not args[i] then
@@ -1748,7 +1795,7 @@ local function interpret(ast)
                 local value
                 local mainScopes = scopes
                 scopes = stdScope()
-                scopes:new(Scope({}, "lua-func"))
+                scopes:new(Scope(nil, nil, "lua-func"))
                 for i, var in ipairs(func.vars) do
                     if not args[i] then
                         if not func.values[var] then return nil, false, Error("func error", "too few arguments", node.pr:copy()) end
@@ -1848,7 +1895,7 @@ local function interpret(ast)
         end,
         object = function(node)
             local nameNode, nodes_, err = table.unpack(node.args)
-            local name, vars, funcs = nameNode.args[1].value, {}, {}
+            local name, vars, consts, funcs = nameNode.args[1].value, {}, {}, {}
             for _, n in ipairs(nodes_) do
                 if n.name == "func" then
                     local funcName = n.args[1].args[1].value
@@ -1863,17 +1910,19 @@ local function interpret(ast)
                     local varName = n.args[1].args[1].value
                     local value = visit(n.args[2]) if err then return nil, false, err end
                     vars[varName] = value
+                    if n.args[3] then consts[varName] = value end
                 end
             end
-            _, err = scopes:set(name,ObjectDef(name, vars, funcs),MEMORY) if err then return nil, false, err end
+            _, err = scopes:set(name,ObjectDef(name, vars, funcs, consts),MEMORY) if err then return nil, false, err end
             return scopes:get(name, MEMORY)
         end,
         new = function(node)
-            local varAddrs, objectDef, err = {}
+            local varAddrs, consts, objectDef, err = {}, {}
             objectDef, _, err = scopes:get(node.args[1], MEMORY) if err then return nil, false, err end
             for k, v in pairs(objectDef.vars) do
                 local addr addr, err = MEMORY:new() if err then return nil, false, err end
                 varAddrs[k] = addr
+                if objectDef.consts[k] then consts[k] = addr end
                 MEMORY[addr] = v
             end
             for k, v in pairs(objectDef.funcs) do
@@ -1881,7 +1930,26 @@ local function interpret(ast)
                 varAddrs[k] = addr
                 MEMORY[addr] = v
             end
-            return Object(node.args[1].args[1].value, varAddrs)
+            return Object(node.args[1].args[1].value, varAddrs, consts)
+        end,
+        use = function(node)
+            local fn = node.args[1]
+            local file = io.open(fn..".rl", "r")
+            if not file then return nil, false, Error("file not found", fn..".rl", node.pr:copy()) end
+            local text = file:read("*a")
+            file:close()
+            local tokens, fileAst, err
+            tokens, err = lex(fn, text) if err then return nil, false, err end
+            fileAst, err = parse(tokens) if err then return nil, false, err end
+            if fileAst.name == "body" then
+                for _, n in ipairs(fileAst.args) do
+                    if contains({ "assign", "func", "struct", "object", "use" }, n.name) then
+                        __, __, err = visit(n) if err then return nil, false, err end
+                    end
+                end
+                return Bool(true)
+            end
+            return visit(fileAst)
         end,
     }
     visit = function(node, ...)
@@ -1892,11 +1960,26 @@ local function interpret(ast)
     if not ast then return Null() end
     local value, returning, err = visit(ast) if err then return nil, false, err end
     if not getmetatable(value) then return nil, false, Error("dev error", "value returned is not a metatable") end
-    return value, returning
+    return value, returning, nil, scopes
+end
+
+local function run(fn, text)
+    local tokens, ast, err
+    tokens, err = lex(fn, text) if err then return nil, false, err end
+    ast, err = parse(tokens) if err then return nil, false, err end
+    return interpret(ast)
+end
+local function runfile(fn)
+    local file = io.open(fn, "r")
+    local text = file:read("*a")
+    local value, returning, err, scopes = run(fn, text) if err then file:close() print(err) return end
+    file:close()
+    if returning then print(value) end
+    return value, returning, nil, scopes
 end
 
 return {
-    lex = lex, parse = parse, interpret = interpret, str = str,
+    lex = lex, parse = parse, interpret = interpret, str = str, run = run, runfile = runfile,
     Number = Number, Bool = Bool, String = String, Type = Type, Null = Null, List = List, Range = Range,
     Func = Func, LuaFunc = LuaFunc, Memory = Memory, Scope = Scope, Scopes = Scopes,
     Token = Token, Node = Node,
