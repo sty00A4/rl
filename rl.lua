@@ -677,7 +677,20 @@ local function parse(tokens)
         end
         return binOp(comp, { Token("kw","and"), Token("kw","or"), Token("kw","xor") })
     end
-    expr = function() return logic() end
+    expr = function()
+        local start = tok.pr.start:copy()
+        local left, err = logic() if err then return nil, err end
+        if tok == Token("kw","if") then
+            advance()
+            local opNode opNode, err = expr() if err then return nil, err end
+            if tok ~= Token("kw","else") then return nil, Error("syntax error", "expected '"..words.kw["else"].."'", tok.pr:copy()) end
+            advance()
+            local right right, err = expr() if err then return nil, err end
+            local stop = tok.pr.stop:copy()
+            return Node("ternOp",{ opNode, left, right },PositionRange(start, stop))
+        end
+        return left
+    end
     statement = function()
         local start = tok.pr.start:copy()
         if tok == Token("kw","if") then return ifExpr() end
@@ -1369,6 +1382,12 @@ local function interpret(ast)
             if opTok.type == "kw" then
                 if opTok.value == "not" then if type(value) == "Bool" then return Bool(not value.value) end end
             end
+        end,
+        ternOp = function(node)
+            local opValue, _, err = visit(node.args[1]) if err then return nil, false, err end
+            if not opValue.toBool then return nil, false, Error("cast error", "cannot cast "..typeOfType(opValue).." to Bool", node.args[1].pr:copy()) end
+            if opValue:toBool().value then return visit(node.args[2]) end
+            return visit(node.args[3])
         end,
         body = function(node, name, breakable, skippable)
             scopes:new(Scope(nil, name))

@@ -1,2 +1,4 @@
-add is func(a:Number, b:Number) a + b end
-return add(6, 9)
+obama is false
+trump is false
+joe is "mama" if obama else "trump" if trump else "biden"
+return "joe " + joe
