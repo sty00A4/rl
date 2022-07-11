@@ -1,7 +1,16 @@
 features
+    obj data type
     dictionary data type
     stack data type
     queue data type
     set data type
+    use node for implementing other files
+    implement lua files with use node
+    "math" library
+    "random" library
+
 fixes
     weird error display (has to do with how node position range is created)
+
+far future
+    http library
