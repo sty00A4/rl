@@ -995,6 +995,12 @@ local MEMORY MEMORY = Memory({
         local _, err = scopes:setAddr(node, args[1].value, args[2].value, MEMORY) if err then return nil, false, err end
         return Null()
     end, Type("null")),
+    -- len
+    LuaFunc({ "value" }, { }, { }, function(_, node, args)
+        if type(args[1]) == "List" then return Number(#args[1].values) end
+        if type(args[1]) == "String" then return Number(#args[1].value) end
+        return nil, false, Error("value error", "cannot get length of "..type(args[1]), node.pr:copy())
+    end, Type("number")),
     -- LIST push
     LuaFunc({ "list", "value" }, { Type("list") }, { }, function(_, _, args)
         push(args[1].values, args[2]:copy())
@@ -1017,7 +1023,7 @@ local MEMORY MEMORY = Memory({
         return List(list)
     end, Type("list")),
 })
-memStart = 5
+memStart = 6
 local function iotaMem() memStart = memStart+1 return memStart end
 local ListFuncs = { push = iotaMem(), pop = iotaMem(), join = iotaMem() }
 local StringFuncs = { split = iotaMem() }
@@ -1104,6 +1110,7 @@ local function stdScope()
     scopes.scopes[1].vars["debugScopes"] = 3
     scopes.scopes[1].vars["fromAddr"] = 4
     scopes.scopes[1].vars["setAddr"] = 5
+    scopes.scopes[1].vars["len"] = 6
     return scopes
 end
 
@@ -1574,6 +1581,7 @@ local function interpret(ast)
                     return nodes.indexAddr(node.args[1].args[2])
                 end
                 local name = node.args[1].args[2]
+                if name.name ~= "name" then return nil, false, Error("index error", "expected name as head", name.pr:copy()) end
                 headAddr, err = scopes:getAddr(node, name.args[1].value) if err then return nil, false, err end
             end end
             func, _, err = visit(node.args[1]) if err then return nil, false, err end
