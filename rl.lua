@@ -118,7 +118,7 @@ local words = {
         ["return"] = "return", ["and"] = "and", ["or"] = "or", ["xor"] = "xor", ["not"] = "not",
         ["end"] = "end", ["if"] = "if", ["else"] = "else", ["elif"] = "elif", ["while"] = "while",
         ["for"] = "for", of = "of", func = "func", ["break"] = "break", skip = "skip",
-        struct = "struct", switch = "switch", default = "default", assert = "assert"
+        struct = "struct", switch = "switch", default = "default", assert = "assert", object = "object"
     },
     bool = { "true", "false" },
     null = "null",
@@ -344,7 +344,7 @@ local function parse(tokens)
     local function advance() idx=idx+1 update() end
     advance()
     local statements, statement, expr, typecast, logic, comp, contain, range, arith, term, factor, power, call, safe,
-    idxList, addr, index, atom, ifExpr, whileExpr, forExpr, func, anonFunc, struct, switch
+    idxList, addr, index, atom, ifExpr, whileExpr, forExpr, func, anonFunc, struct, switch, object
     local function binOp(f1, ops, f2)
         if not f2 then f2 = f1 end
         local start, stop = tok.pr.start:copy(), tok.pr.stop:copy()
@@ -359,6 +359,24 @@ local function parse(tokens)
             left = Node("binOp", { opTok, left, right }, PositionRange(start, stop))
         end
         return left
+    end
+    object = function()
+        local start= tok.pr.start:copy()
+        advance()
+        local nodes, nameNode, err = {}, {}
+        nameNode, err = atom() if err then return nil, err end
+        if nameNode.name ~= "name" then return nil, Error("syntax error", "expected name", nameNode.pr:copy()) end
+        if tok ~= Token("nl") then return nil, Error("syntax error", "expected new line", tok.pr:copy()) end
+        advance()
+        local stop = tok.pr.stop:copy()
+        while tok ~= Token("kw","end") do
+            local node node, err = statement() if err then return nil, err end
+            push(nodes, node)
+            while tok == Token("nl") do advance() end
+        end
+        stop = tok.pr.stop:copy()
+        advance()
+        return Node("object",{ nameNode, nodes },PositionRange(start, stop))
     end
     switch = function()
         local start = tok.pr.start:copy()
@@ -759,6 +777,7 @@ local function parse(tokens)
         if tok == Token("kw","skip") then local tok_=tok:copy() advance() return Node("skip",{ tok_:copy() },tok_.pr:copy()) end
         if tok == Token("kw","struct") then return struct() end
         if tok == Token("kw","switch") then return switch() end
+        if tok == Token("kw","object") then return object() end
         if tok == Token("kw","assert") then
             advance()
             local stop = tok.pr.stop:copy()
