@@ -1,3 +1,9 @@
-global name is "sty00a4"
-func say() print(name) end
-say()
+global const localhost is "127.0.0.1"
+func change()
+	localhost is "127.0.0.2"
+	debugMem()
+end
+debugMem()
+change()
+debugMem()
+return localhost

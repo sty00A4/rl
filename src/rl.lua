@@ -1242,11 +1242,12 @@ local function Scopes(scopes, globals)
                 if type(nameNode) ~= "string" then name = nameNode.args[1].value end
                 if global then
                     local addr, err = memory:new() if err then return nil, err end
+                    if s.globals[name] then return nil, Error("name error", "'"..name.."' is already global") end
                     s.globals[name] = addr
                 end
                 local addr, err
                 local scope
-                for _, v in ipairs(s.scopes) do if v:get(nameNode) then scope=v end end
+                for _, v in ipairs(s.scopes) do if v:get(name) then scope=v end end
                 if not scope then
                     scope = s.scopes[#s.scopes]
                     addr, err = memory:new() if err then return nil, err end
@@ -1790,7 +1791,7 @@ local function interpret(ast)
                     push(args, value)
                 end
                 local value
-                local mainScopes = scopes:copy()
+                local mainScopes = scopes.scopes
                 for i, var in ipairs(func.vars) do
                     if func.varTypes[var.args[1].value] and args[i] then
                         local type_ type_, _, err = visit(func.varTypes[var.args[1].value]) if err then return nil, false, err end
@@ -1810,7 +1811,7 @@ local function interpret(ast)
                     _, err = scopes:set(var, args[i], MEMORY) if err then return nil, false, err end
                 end
                 value, _, err = visit(func.body) if err then return nil, false, err end
-                scopes = mainScopes
+                scopes.scopes = mainScopes
                 if func.returnType then
                     if type(value) ~= typeOfType(func.returnType) then
                         return nil, false, Error("func error", "returned value isn't "..str(typeOfType(func.returnType))..", got "..type(value), node.pr:copy())
@@ -1907,7 +1908,7 @@ local function interpret(ast)
                 local funcName = funcNode.args[1].args[1].value
                 funcs[funcName] = funcNode
             end
-            _, err = scopes:set(name,StructDef(name, vars, funcs),MEMORY,false,true) if err then return nil, false, err end
+            _, err = scopes:set(name,StructDef(name, vars, funcs),MEMORY,true,true) if err then return nil, false, err end
             return scopes:get(name, MEMORY)
         end,
         switch = function(node)
@@ -1946,7 +1947,7 @@ local function interpret(ast)
                     if n.args[3] then consts[varName] = value end
                 end
             end
-            _, err = scopes:set(name,ObjectDef(name, vars, funcs, consts),MEMORY,false,true) if err then return nil, false, err end
+            _, err = scopes:set(name,ObjectDef(name, vars, funcs, consts),MEMORY,true,true) if err then return nil, false, err end
             return scopes:get(name, MEMORY)
         end,
         new = function(node)

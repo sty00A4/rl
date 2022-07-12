@@ -13,4 +13,4 @@ object Math
 		return sum
 	end
 end
-math is new Math
+global math is new Math
