@@ -1,1 +1,3 @@
-return type(1) = Number 
+global name is "sty00a4"
+func say() print(name) end
+say()

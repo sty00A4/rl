@@ -125,7 +125,7 @@ local words = {
         ["end"] = "end", ["if"] = "if", ["else"] = "else", ["elif"] = "elif", ["while"] = "while",
         ["for"] = "for", of = "of", func = "func", ["break"] = "break", skip = "skip",
         struct = "struct", switch = "switch", default = "default", assert = "assert", object = "object",
-        new = "new", const = "const", use = "use",
+        new = "new", const = "const", global = "global", use = "use",
     },
     bool = { "true", "false" },
     null = "null",
@@ -575,6 +575,7 @@ local function parse(tokens)
         if tok ~= Token("eval","in") then return nil, Error("syntax error", "expected '"..delimiters.eval[1].."'", tok.pr:copy()) end
         advance()
         while true do
+            if tok == Token("eval","out") then advance() break end
             local var, varType, value
             var, err = atom() if err then return nil, err end
             if var.name ~= "name" then return nil, Error("syntax error", "expected name, got "..str(var.name), var.pr:copy()) end
@@ -769,7 +770,7 @@ local function parse(tokens)
     end
     statement = function()
         local start = tok.pr.start:copy()
-        local const = false
+        local const, global = false, false
         if tok == Token("kw","if") then return ifExpr() end
         if tok == Token("kw","func") then return func() end
         if tok == Token("kw","return") then
@@ -803,7 +804,6 @@ local function parse(tokens)
             stop = tok.pr.stop:copy()
             return Node("assert", { node }, PositionRange(start, stop))
         end
-        if tok == Token("kw","const") then advance() const = true end
         if tok == Token("kw","use") then
             local path, stop, last = "", tok.pr.stop:copy()
             advance()
@@ -826,11 +826,13 @@ local function parse(tokens)
             if path == "" then return nil, Error("syntax error", "expected name or index") end
             return Node("use",{ path },PositionRange(start, stop))
         end
+        if tok == Token("kw","global") then advance() global = true end
+        if tok == Token("kw","const") then advance() const = true end
         local node, err = expr() if err then return nil, err end
         if tok == Token("kw","assign") then
             advance()
             local value value, err = expr() if err then return nil, err end
-            return Node("assign",{node,value,const},PositionRange(node.pr.start:copy(),value.pr.stop:copy()))
+            return Node("assign",{node,value,const,global},PositionRange(node.pr.start:copy(),value.pr.stop:copy()))
         end
         return node
     end
@@ -1189,13 +1191,14 @@ local function Scope(vars, consts, label)
             end }
     )
 end
-local function Scopes(scopes)
+local function Scopes(scopes, globals)
     if not scopes then scopes = {} end
+    if not globals then globals = {} end
     return setmetatable(
-            { scopes = scopes, copy = function(s)
+            { scopes = scopes, globals = globals, copy = function(s)
                 local a = {}
                 for i, v in ipairs(s.scopes) do a[i] = v:copy() end
-                return Scopes(a)
+                return Scopes(a, s.globals)
             end, setAddr = function(s, node, name, addr, memory)
                 local scope
                 for _, v in ipairs(s.scopes) do if v:get(name) then scope=v end end
@@ -1208,9 +1211,8 @@ local function Scopes(scopes)
             end, getAddr = function(s, node, name)
                 local scope
                 for _, v in ipairs(s.scopes) do if v:get(name) then scope=v end end
-                if scope then
-                    return scope.vars[name]
-                end
+                if scope then return scope.vars[name] end
+                if s.globals[name] then return s.globals[name] end
                 return nil, Error("name error", "name '"..name.."' cannot be found", node.pr:copy())
             end, get = function(s, node, memory)
                 local name = node
@@ -1222,20 +1224,26 @@ local function Scopes(scopes)
                     if memory[addr] then return memory[addr] end
                     return nil, Error("name error", "address of '"..name.."' doesn't exist in memory", node.pr:copy())
                 end
-                print(str(s.scopes))
+                if s.globals[name] then
+                    if memory[s.globals[name]] then return memory[s.globals[name]] end
+                    return nil, Error("name error", "address of '"..name.."' doesn't exist in memory", node.pr:copy())
+                end
                 if type(node) ~= "string" then return nil, Error("name error", "name '"..name.."' is not registered", node.pr:copy()) end
                 return nil, Error("name error", "name '"..name.."' is not registered")
             end, isConst = function(s, addr)
                 local scope
                 for _, v in ipairs(s.scopes) do
-                    print(str(v.consts), addr, contains(v.consts, addr))
                     if contains(v.consts, addr) then scope=v end
                 end
                 if scope then return scope:isConst(addr) end
                 return false
-            end, set = function(s, nameNode, value, memory, const)
+            end, set = function(s, nameNode, value, memory, const, global)
                 local name = nameNode
                 if type(nameNode) ~= "string" then name = nameNode.args[1].value end
+                if global then
+                    local addr, err = memory:new() if err then return nil, err end
+                    s.globals[name] = addr
+                end
                 local addr, err
                 local scope
                 for _, v in ipairs(s.scopes) do if v:get(nameNode) then scope=v end end
@@ -1270,13 +1278,13 @@ end
 
 local function stdScope()
     local scopes = Scopes({ Scope() })
-    scopes.scopes[1].vars["print"] = 1
-    scopes.scopes[1].vars["debugMem"] = 2
-    scopes.scopes[1].vars["debugScopes"] = 3
-    scopes.scopes[1].vars["fromAddr"] = 4
-    scopes.scopes[1].vars["setAddr"] = 5
-    scopes.scopes[1].vars["len"] = 6
-    scopes.scopes[1].vars["type"] = 7
+    scopes.globals["print"] = 1
+    scopes.globals["debugMem"] = 2
+    scopes.globals["debugScopes"] = 3
+    scopes.globals["fromAddr"] = 4
+    scopes.globals["setAddr"] = 5
+    scopes.globals["len"] = 6
+    scopes.globals["type"] = 7
     return scopes
 end
 
@@ -1349,6 +1357,8 @@ local function interpret(ast)
         assign = function(node)
             local value, _, err = visit(node.args[2]) if err then return nil, false, err end
             if node.args[1].name == "binOp" and node.args[1].args[1] == Token("index") then
+                if node.args[3] then return nil, false, Error("assign error", "cannot assign index as constant") end
+                if node.args[4] then return nil, false, Error("assign error", "cannot assign index as global") end
                 local addr addr, _, err = nodes.indexAddr(node.args[1], true) if err then return nil, false, err end
                 addr = addr.value
                 if typeOfType(MEMORY[addr]) ~= typeOfType(value) then
@@ -1357,9 +1367,11 @@ local function interpret(ast)
                 MEMORY[addr] = value:copy()
                 return value
             elseif node.args[1].name == "name" then
-                _, err = scopes:set(node.args[1], value, MEMORY, node.args[3]) if err then return nil, false, err end
+                _, err = scopes:set(node.args[1], value, MEMORY, node.args[3], node.args[4]) if err then return nil, false, err end
                 return value
             elseif node.args[1].name == "idxList" then
+                if node.args[3] then return nil, false, Error("assign error", "cannot assign list index as constant") end
+                if node.args[4] then return nil, false, Error("assign error", "cannot assign list index as global") end
                 if node.args[1].args[1].name ~= "name" then return nil, false, Error("assign error", "expected name", node.args[1].args[1].pr:copy()) end
                 local list list, _, err = visit(node.args[1].args[1]) if err then return nil, false, err end
                 if type(list) ~= "List" then return nil, false, Error("index error", "expected List, got "..typeOfType(list), node.args[1].args[1].pr:copy()) end
@@ -1778,7 +1790,7 @@ local function interpret(ast)
                     push(args, value)
                 end
                 local value
-                local mainScopes = scopes
+                local mainScopes = scopes:copy()
                 for i, var in ipairs(func.vars) do
                     if func.varTypes[var.args[1].value] and args[i] then
                         local type_ type_, _, err = visit(func.varTypes[var.args[1].value]) if err then return nil, false, err end
@@ -1787,7 +1799,7 @@ local function interpret(ast)
                         end
                     end
                 end
-                scopes = stdScope()
+                scopes.scopes = {}
                 scopes:new(Scope(nil, nil, "func"))
                 scopes.scopes[#scopes.scopes].vars["self"] = headAddr
                 for i, var in ipairs(func.vars) do
@@ -1895,7 +1907,7 @@ local function interpret(ast)
                 local funcName = funcNode.args[1].args[1].value
                 funcs[funcName] = funcNode
             end
-            _, err = scopes:set(name,StructDef(name, vars, funcs),MEMORY) if err then return nil, false, err end
+            _, err = scopes:set(name,StructDef(name, vars, funcs),MEMORY,false,true) if err then return nil, false, err end
             return scopes:get(name, MEMORY)
         end,
         switch = function(node)
@@ -1934,7 +1946,7 @@ local function interpret(ast)
                     if n.args[3] then consts[varName] = value end
                 end
             end
-            _, err = scopes:set(name,ObjectDef(name, vars, funcs, consts),MEMORY) if err then return nil, false, err end
+            _, err = scopes:set(name,ObjectDef(name, vars, funcs, consts),MEMORY,false,true) if err then return nil, false, err end
             return scopes:get(name, MEMORY)
         end,
         new = function(node)
