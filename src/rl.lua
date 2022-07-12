@@ -67,6 +67,11 @@ table.entries = function(t)
     for _, __ in pairs(t) do count = count + 1 end
     return count
 end
+table.keyOfValue = function(t, val)
+    for k, v in pairs(t) do
+        if v == val then return k end
+    end
+end
 local push = table.insert
 local pop = table.remove
 local concat = table.concat
@@ -80,6 +85,7 @@ local join = string.join
 local contains = table.contains
 local containsStart = table.containsStart
 local containsKey = table.containsKey
+local keyOfValue = table.keyOfValue
 TYPE = type
 type = function(v)
     if getmetatable(v) then if getmetatable(v).__name then return tostring(getmetatable(v).__name) end end
@@ -162,13 +168,15 @@ local function PositionRange(start, stop)
 end
 --TODO: better errors
 local function Error(type_, details, pr)
-    if pr then pr = pr:copy() end
+    local fn, ftext = "<unknown>", ""
+    if pr then pr = pr:copy() fn = pr.fn ftext = pr.text end
     return setmetatable(
-            { type = type_, details = details, pr = pr, fn = pr.fn, text = pr.text,
+            { type = type_, details = details, pr = pr, fn = fn, text = ftext,
               copy = function(s) return Error(s.type, s.details, s.pr) end },
             { __name = "Error", __tostring = function(s)
-                local errStr = "in "..s.fn.."\n"..s.type..": "..s.details
+                local errStr = s.type..": "..s.details.."\n"
                 if not s.pr then return errStr end
+                errStr = errStr.."in "..s.fn.."\n"
                 local lines = split(s.text, "\n")
                 local ln, line = 1
                 local newLines, startLn, stopLn = {}, s.pr.start.ln, s.pr.stop.ln
@@ -1128,6 +1136,15 @@ local MEMORY MEMORY = Memory({
         if type(args[1]) == "String" then return Number(#args[1].value) end
         return nil, false, Error("value error", "cannot get length of "..type(args[1]), node.pr:copy())
     end, Type("number")),
+    -- type
+    LuaFunc({ "value" }, { }, { }, function(scopes, node, args)
+        if args[1] == nil then error("argument is nil", 2) end
+        if words.type[args[1].value] then return Type(args[1].value) end
+        if type(args[1]) == "Struct" or type(args[1]) == "Object" then return Type(args[1].name) end
+        if contains(words.type, type(args[1])) then return Type(keyOfValue(words.type, type(args[1]))) end
+        local value, err = scopes:get(args[1].name, MEMORY) if err then return nil, false, err end
+        return Type(keyOfValue(words.type, type(value)))
+    end, Type("type")),
 })
 memIota, memStart = #MEMORY, #MEMORY + 1
 -- LIST push
@@ -1205,7 +1222,9 @@ local function Scopes(scopes)
                     if memory[addr] then return memory[addr] end
                     return nil, Error("name error", "address of '"..name.."' doesn't exist in memory", node.pr:copy())
                 end
-                return nil, Error("name error", "name '"..name.."' is not registered", node.pr:copy())
+                print(str(s.scopes))
+                if type(node) ~= "string" then return nil, Error("name error", "name '"..name.."' is not registered", node.pr:copy()) end
+                return nil, Error("name error", "name '"..name.."' is not registered")
             end, isConst = function(s, addr)
                 local scope
                 for _, v in ipairs(s.scopes) do
@@ -1219,7 +1238,7 @@ local function Scopes(scopes)
                 if type(nameNode) ~= "string" then name = nameNode.args[1].value end
                 local addr, err
                 local scope
-                for _, v in ipairs(s.scopes) do if v:get(name) then scope=v end end
+                for _, v in ipairs(s.scopes) do if v:get(nameNode) then scope=v end end
                 if not scope then
                     scope = s.scopes[#s.scopes]
                     addr, err = memory:new() if err then return nil, err end
@@ -1257,6 +1276,7 @@ local function stdScope()
     scopes.scopes[1].vars["fromAddr"] = 4
     scopes.scopes[1].vars["setAddr"] = 5
     scopes.scopes[1].vars["len"] = 6
+    scopes.scopes[1].vars["type"] = 7
     return scopes
 end
 
@@ -1284,7 +1304,8 @@ local function interpret(ast)
         if type(type_) == "Struct" then return type_.name end
         if type(type_) == "Object" then return type_.name end
         if contains(words.type, type(type_)) then return type(type_) end
-        local value, err = scopes:get(type_.name, MEMORY) if err then return end
+        local value, err = scopes:get(type_.name, MEMORY) if err then return nil, false, err end
+        return type(value)
     end
     nodes = {
         notImplemented = function(node) return nil, false, Error("not implemented", node.name, node.pr:copy()) end,
@@ -1918,7 +1939,7 @@ local function interpret(ast)
         end,
         new = function(node)
             local varAddrs, consts, objectDef, err = {}, {}
-            objectDef, _, err = scopes:get(node.args[1], MEMORY) if err then return nil, false, err end
+            objectDef, err = scopes:get(node.args[1], MEMORY) if err then return nil, false, err end
             for k, v in pairs(objectDef.vars) do
                 local addr addr, err = MEMORY:new() if err then return nil, false, err end
                 varAddrs[k] = addr
