@@ -229,7 +229,7 @@ local function lex(fn, text)
     local function advance() pos:advance() char = pos:sub() end
     advance()
     local function main()
-        if char == "#" then while char ~= "\n" do advance() end advance() return end
+        if char == "#" then while char ~= "\n" and char ~= "" do advance() end advance() return end
         if contains({ " ", "\t", "\r" }, char) then advance() return end
         if char == "\n" then push(tokens, Token("nl", nil, PositionRange(pos:copy(), pos:copy()))) advance() return end
         if contains(string.digits, char) then
@@ -1179,7 +1179,10 @@ local function Scope(vars, consts, label)
     if not consts then consts = {} end
     return setmetatable(
             { vars = vars, consts = consts, label = label, copy = function(s) return Scope(s.vars, s.consts, s.label) end,
-              get = function(s, name) return s.vars[name] end,
+              get = function(s, name)
+                  if s.vars[name] then return s.vars[name] end
+                  if s.consts[name] then return s.consts[name] end
+              end,
               set = function(s, name, addr, const)
                   s.vars[name] = addr
                   if const then s.consts[name] = addr end
@@ -1191,11 +1194,12 @@ local function Scope(vars, consts, label)
             end }
     )
 end
-local function Scopes(scopes, globals)
+local function Scopes(scopes, globals, globConsts)
     if not scopes then scopes = {} end
     if not globals then globals = {} end
+    if not globConsts then globConsts = {} end
     return setmetatable(
-            { scopes = scopes, globals = globals, copy = function(s)
+            { scopes = scopes, globals = globals, globConsts = globConsts, copy = function(s)
                 local a = {}
                 for i, v in ipairs(s.scopes) do a[i] = v:copy() end
                 return Scopes(a, s.globals)
@@ -1217,15 +1221,15 @@ local function Scopes(scopes, globals)
             end, get = function(s, node, memory)
                 local name = node
                 if type(node) ~= "string" then name = node.args[1].value end
+                if s.globals[name] then
+                    if memory[s.globals[name]] then return memory[s.globals[name]] end
+                    return nil, Error("name error", "address of '"..name.."' doesn't exist in memory", node.pr:copy())
+                end
                 local scope
                 for _, v in ipairs(s.scopes) do if v:get(name) then scope=v end end
                 if scope then
                     local addr = scope:get(name)
                     if memory[addr] then return memory[addr] end
-                    return nil, Error("name error", "address of '"..name.."' doesn't exist in memory", node.pr:copy())
-                end
-                if s.globals[name] then
-                    if memory[s.globals[name]] then return memory[s.globals[name]] end
                     return nil, Error("name error", "address of '"..name.."' doesn't exist in memory", node.pr:copy())
                 end
                 if type(node) ~= "string" then return nil, Error("name error", "name '"..name.."' is not registered", node.pr:copy()) end
@@ -1240,22 +1244,32 @@ local function Scopes(scopes, globals)
             end, set = function(s, nameNode, value, memory, const, global)
                 local name = nameNode
                 if type(nameNode) ~= "string" then name = nameNode.args[1].value end
+                if s.globConsts[name] then
+                    if type(nameNode) ~= "string" then return nil, Error("name error", "variable is constant", nameNode.pr:copy()) end
+                    return nil, Error("name error", "variable is constant")
+                end
                 if global then
                     local addr, err = memory:new() if err then return nil, err end
                     if s.globals[name] then return nil, Error("name error", "'"..name.."' is already global") end
                     s.globals[name] = addr
+                    if const then s.globConsts[name] = addr end
                 end
                 local addr, err
                 local scope
                 for _, v in ipairs(s.scopes) do if v:get(name) then scope=v end end
                 if not scope then
+                    if s.globals[name] then
+                        addr = s.globals[name]
+                        memory[s.globals[name]] = value
+                        return addr
+                    end
                     scope = s.scopes[#s.scopes]
                     addr, err = memory:new() if err then return nil, err end
                 else
                     addr = scope.vars[name]
-                    if contains(scope.consts, addr) then
-                        if type(nameNode) ~= "Node" then return nil, Error("name error", "cannot change value of constant name") end
-                        return nil, Error("name error", "cannot change value of constant name", nameNode.pr:copy())
+                    if scope.consts[name] then
+                        if type(nameNode) ~= "string" then return nil, Error("name error", "variable is constant", nameNode.pr:copy()) end
+                        return nil, Error("name error", "variable is constant")
                     end
                 end
                 scope:set(name, addr, const)
@@ -1266,6 +1280,7 @@ local function Scopes(scopes, globals)
               drop = function(s)
                   for _, addr in pairs(s.scopes[#s.scopes].vars) do
                       if type(MEMORY[addr]) == "Struct" then MEMORY[addr]:deleteAddrs(MEMORY) end
+                      if type(MEMORY[addr]) == "Object" then MEMORY[addr]:deleteAddrs(MEMORY) end
                       MEMORY[addr] = nil
                   end
                   pop(s.scopes)
@@ -1367,10 +1382,12 @@ local function interpret(ast)
                 end
                 MEMORY[addr] = value:copy()
                 return value
-            elseif node.args[1].name == "name" then
+            end
+            if node.args[1].name == "name" then
                 _, err = scopes:set(node.args[1], value, MEMORY, node.args[3], node.args[4]) if err then return nil, false, err end
                 return value
-            elseif node.args[1].name == "idxList" then
+            end
+            if node.args[1].name == "idxList" then
                 if node.args[3] then return nil, false, Error("assign error", "cannot assign list index as constant") end
                 if node.args[4] then return nil, false, Error("assign error", "cannot assign list index as global") end
                 if node.args[1].args[1].name ~= "name" then return nil, false, Error("assign error", "expected name", node.args[1].args[1].pr:copy()) end
@@ -1767,6 +1784,7 @@ local function interpret(ast)
                 if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[6].pr:copy()) end
             end
             local func = Func(node.args[2], node.args[3], node.args[4], node.args[5], type_)
+            if containsKey(scopes.globals, node.args[1].args[1].value) then return nil, false, Error("name error", "function variable is a global variable", node.args[6].pr:copy()) end
             if node.args[1] then _, err = scopes:set(node.args[1], func, MEMORY) if err then return nil, false, err end end
             return func
         end,
@@ -1808,6 +1826,7 @@ local function interpret(ast)
                         if not func.values[var.args[1].value] then return nil, false, Error("func error", "too few arguments", node.pr:copy()) end
                         args[i], _, err = visit(func.values[var.args[1].value]) if err then return nil, false, err end
                     end
+                    if containsKey(scopes.globals, var.args[1].value) then return nil, false, Error("name error", "function variable is a global variable", node.pr:copy()) end
                     _, err = scopes:set(var, args[i], MEMORY) if err then return nil, false, err end
                 end
                 value, _, err = visit(func.body) if err then return nil, false, err end
@@ -1827,18 +1846,20 @@ local function interpret(ast)
                     push(args, value)
                 end
                 local value
-                local mainScopes = scopes
-                scopes = stdScope()
-                scopes:new(Scope(nil, nil, "lua-func"))
+                local mainScopes = scopes.scopes
+                scopes.scopes = {}
+                scopes:new(Scope(nil, nil, "func"))
+                scopes.scopes[#scopes.scopes].vars["self"] = headAddr
                 for i, var in ipairs(func.vars) do
                     if not args[i] then
                         if not func.values[var] then return nil, false, Error("lua func error", "too few arguments", node.pr:copy()) end
                         args[i], _, err = func.values[var] if err then return nil, false, err end
                     end
+                    if containsKey(scopes.globals, var.args[1].value) then return nil, false, Error("name error", "function variable is a global variable", node.pr:copy()) end
                     _, err = scopes:set(var, args[i], MEMORY) if err then return nil, false, err end
                 end
                 value, _, err = func.func(scopes, node, args) if err then return nil, false, err end
-                scopes = mainScopes
+                scopes.scopes = mainScopes
                 if func.returnType then if type(value) ~= typeOfType(func.returnType) then
                         return nil, false, Error("func error", "returned value isn't "..str(typeOfType(func.returnType))..", got "..type(value), node.pr:copy())
                 end end
@@ -1925,7 +1946,7 @@ local function interpret(ast)
             local value, _, err = visit(node.args[1]) if err then return value, true, err end
             if not value.toBool then return nil, false, Error("cast error", "cannot cast "..typeOfType(value).." to Bool", node.args[1].pr:copy()) end
             if not value:toBool().value then return nil, false, Error("assertion", "not true", node.pr:copy()) end
-            return value, true
+            return value
         end,
         object = function(node)
             local nameNode, nodes_, err = table.unpack(node.args)
