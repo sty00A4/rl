@@ -1128,29 +1128,29 @@ local MEMORY MEMORY = Memory({
         if type(args[1]) == "String" then return Number(#args[1].value) end
         return nil, false, Error("value error", "cannot get length of "..type(args[1]), node.pr:copy())
     end, Type("number")),
-    -- LIST push
-    LuaFunc({ "list", "value" }, { Type("list") }, { }, function(_, _, args)
-        push(args[1].values, args[2]:copy())
-        return args[1]:copy()
-    end, Type("list")),
-    -- LIST pop
-    LuaFunc({ "list", "index" }, { Type("list"), Type("number") }, { index=Number(-1) }, function(_, _, args)
-        if args[2].value < 0 then args[2].value = #args[1].values + 1 + args[2].value end
-        local value = pop(args[1].values, args[2].value)
-        return value:copy()
-    end),
-    -- LIST join
-    LuaFunc({ "list", "string" }, { Type("list"), Type("string") }, { string=String("") }, function(_, _, args)
-        return String((args[2].value):join(args[1].values))
-    end, Type("string")),
-    -- STRING split
-    LuaFunc({ "string", "sep" }, { Type("string"), Type("string") }, { }, function(_, _, args)
+})
+memIota, memStart = #MEMORY, #MEMORY + 1
+-- LIST push
+push(MEMORY, LuaFunc({ "list", "value" }, { Type("list") }, { }, function(_, _, args)
+    push(args[1].values, args[2]:copy())
+    return args[1]:copy()
+end, Type("list")))
+-- LIST pop
+push(MEMORY, LuaFunc({ "list", "index" }, { Type("list"), Type("number") }, { index=Number(-1) }, function(_, _, args)
+    if args[2].value < 0 then args[2].value = #args[1].values + 1 + args[2].value end
+    local value = pop(args[1].values, args[2].value)
+    return value:copy()
+end))
+-- LIST join
+push(MEMORY, LuaFunc({ "list", "string" }, { Type("list"), Type("string") }, { string=String("") }, function(_, _, args)
+    return String((args[2].value):join(args[1].values))
+end, Type("string")))
+-- STRING split
+push(MEMORY, LuaFunc({ "string", "sep" }, { Type("string"), Type("string") }, { }, function(_, _, args)
         local list = split(args[1].value, args[2].value)
         for i = 1, #list do list[i] = String(list[i]) end
         return List(list)
-    end, Type("list")),
-})
-memIota, memStart = 6, #MEMORY + 1
+    end, Type("list")))
 local function iotaMem() memIota = memIota+1 return memIota end
 local ListFuncs = { push = iotaMem(), pop = iotaMem(), join = iotaMem() }
 local StringFuncs = { split = iotaMem() }
@@ -1798,7 +1798,7 @@ local function interpret(ast)
                 scopes:new(Scope(nil, nil, "lua-func"))
                 for i, var in ipairs(func.vars) do
                     if not args[i] then
-                        if not func.values[var] then return nil, false, Error("func error", "too few arguments", node.pr:copy()) end
+                        if not func.values[var] then return nil, false, Error("lua func error", "too few arguments", node.pr:copy()) end
                         args[i], _, err = func.values[var] if err then return nil, false, err end
                     end
                     _, err = scopes:set(var, args[i], MEMORY) if err then return nil, false, err end

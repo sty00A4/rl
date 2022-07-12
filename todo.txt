@@ -3,9 +3,7 @@ features
     stack data type
     queue data type
     set data type
-    use node for implementing other files
     implement lua files with use node
-    "math" library
     "random" library
 
 fixes
