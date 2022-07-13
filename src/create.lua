@@ -35,6 +35,28 @@ return {
             create:tokNode(type_,"type")
         },create.PR)
     end,
+    luaFuncAnon = function(create, vars, varTypes, values, func, type_)
+        local vars_ = {} for _, v in ipairs(vars) do table.insert(vars_, v) end
+        local varTypes_ = {} for k, v in pairs(varTypes) do varTypes_[k] = create:tokNode(v,"type") end
+        if type_ then
+            return rl.Node("luaFunc",{
+                nil,
+                vars_,
+                varTypes_,
+                values,
+                func,
+                create:tokNode(type_,"type")
+            },create.PR)
+        else
+            return rl.Node("luaFunc",{
+                nil,
+                vars_,
+                varTypes_,
+                values,
+                func,
+            },create.PR)
+        end
+    end,
     object = function(create, name, nodes)
         return rl.Node("object", {
             create:tokNode(name,"name"),
@@ -50,7 +72,7 @@ return {
     objectInit = function(create, objName, name, nodes)
         return {
             create:object(objName, nodes),
-            create:assignObj(name,objName,false,true), -- math is new Math
+            create:assignObj(name,objName,true,true), -- math is new Math
         }
     end,
     objectInitBody = function(create, objName, name, nodes)

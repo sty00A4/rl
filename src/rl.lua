@@ -189,7 +189,7 @@ local function Error(type_, details, pr)
                         for col = 1, #line do
                             local start, stop = 0, #line
                             if s.pr.start.ln == ln then start = s.pr.start.col end
-                            if s.pr.stop.ln == ln then stop = s.pr.stop.col-1 end
+                            if s.pr.stop.ln == ln then stop = s.pr.stop.col end
                             if col >= start and col <= stop then underline=underline.."~"
                             else underline=underline.." " end
                         end
@@ -1553,8 +1553,14 @@ local function interpret(ast)
             local value, err = visit(node.args[2]) if err then return nil, false, err end
             if opTok.type == "sub" then if type(value) == "Number" then return Number(-value.value) end end
             if opTok.type == "kw" then
-                if opTok.value == "not" then if type(value) == "Bool" then return Bool(not value.value) end end
+                if opTok.value == "not" then
+                    if type(value) == "Bool" then return Bool(not value.value)
+                    else if value.toBool then return Bool(not value:toBool().value) end end
+                end
             end
+            local name = opTok.type
+            if opTok.value then name = opTok.value end
+            return nil, false, Error("operation error", "unary operation '"..name.."' cannot be performed with "..type(value), node.pr:copy())
         end,
         ternOp = function(node)
             local opTok, opNode, left, right = node.args[1], node.args[2], node.args[3], node.args[4]
@@ -1698,7 +1704,7 @@ local function interpret(ast)
                 if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[6].pr:copy()) end
             end
             local func = Func(node.args[2], node.args[3], node.args[4], node.args[5], type_)
-            if containsKey(scopes.globals, node.args[1].args[1].value) then return nil, false, Error("name error", "function variable is a global variable", node.args[6].pr:copy()) end
+            if node.args[1] then if containsKey(scopes.globals, node.args[1].args[1].value) then return nil, false, Error("name error", "function variable is a global variable", node.args[6].pr:copy()) end end
             if node.args[1] then _, err = scopes:set(node.args[1], func, MEMORY) if err then return nil, false, err end end
             return func
         end,
@@ -1709,7 +1715,7 @@ local function interpret(ast)
                 if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[6].pr:copy()) end
             end
             local func = LuaFunc(node.args[2], node.args[3], node.args[4], node.args[5], type_)
-            if containsKey(scopes.globals, node.args[1].args[1].value) then return nil, false, Error("name error", "function variable is a global variable", node.args[6].pr:copy()) end
+            if node.args[1] then if containsKey(scopes.globals, node.args[1].args[1].value) then return nil, false, Error("name error", "function variable is a global variable", node.args[6].pr:copy()) end end
             if node.args[1] then _, err = scopes:set(node.args[1], func, MEMORY) if err then return nil, false, err end end
             return func
         end,
@@ -1896,12 +1902,12 @@ local function interpret(ast)
             local luaFile = false
             local file = io.open(fn..".rl", "r")
             if not file then
+                if not pcall(require, fn) then return nil, false, Error("file not found", fn..".lua", node.pr:copy()) end
                 file = require(fn)
-                if type(file) ~= "Node" then return nil, false, Error("file not found", fn..".rl", node.pr:copy()) end
-                if file then luaFile = true end
+                if type(file) ~= "Node" then return nil, false, Error("file not found", fn..".lua", node.pr:copy()) end
+                return visit(file)
             end
             if not file then return nil, false, Error("file not found", fn..".rl", node.pr:copy()) end
-            if luaFile then return visit(file) end
             local text = file:read("*a")
             file:close()
             local tokens, fileAst, err
