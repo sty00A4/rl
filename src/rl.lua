@@ -465,10 +465,11 @@ local function parse(tokens)
         if tok == Token("nl") then
             body, err = statements({ Token("kw","end") }) if err then return nil, err end
             stop = tok.pr.stop:copy()
-            advance()
+            if tok == Token("kw","end") then advance() else return nil, Error("syntax error","expected '"..words.kw["end"].."'", tok.pr:copy()) end
         else
             body, err = statement() if err then return nil, err end
             stop = tok.pr.stop:copy()
+            if tok == Token("kw","end") then advance() else return nil, Error("syntax error","expected '"..words.kw["end"].."'", tok.pr:copy()) end
         end
         if iterator then return Node("forOf",{ nameNode, iterator, body }, PositionRange(start, stop))
         else return Node("for",{ nameNode, body }, PositionRange(start, stop)) end
@@ -481,9 +482,10 @@ local function parse(tokens)
         if tok == Token("nl") then
             advance()
             body, err = statements({ Token("kw","end") }) if err then return nil, err end
-            advance()
+            if tok == Token("kw","end") then advance() else return nil, Error("syntax error","expected '"..words.kw["end"].."'", tok.pr:copy()) end
         else
             body, err = statement() if err then return nil, err end
+            if tok == Token("kw","end") then advance() else return nil, Error("syntax error","expected '"..words.kw["end"].."'", tok.pr:copy()) end
         end
         return Node("while",{ condNode, body },PositionRange(start, tok.pr.stop:copy()))
     end
@@ -516,9 +518,8 @@ local function parse(tokens)
                 elseNode, err = statement() if err then return nil, err end
             end
         end
-        if tok == Token("kw","else") then return nil, Error("syntax error", "expected "..words.kw["end"], tok.pr:copy()) end
         stop = tok.pr.stop:copy()
-        advance()
+        if tok == Token("kw","end") then advance() else return nil, Error("syntax error","expected '"..words.kw["end"].."'", tok.pr:copy()) end
         return Node("if", { condNodes, bodyNodes, elseNode }, PositionRange(start, stop))
     end
     anonFunc = function()
@@ -556,15 +557,13 @@ local function parse(tokens)
         if tok == Token("nl") then
             while tok == Token("nl") do advance() end
             body, err = statements({ Token("kw","end") }) if err then return nil, err end
-            if tok ~= Token("kw","end") then return nil, Error("syntax error", "expected '"..words.kw["end"].."'", tok.pr:copy()) end
             stop = tok.pr.stop:copy()
-            advance()
+            if tok == Token("kw","end") then advance() else return nil, Error("syntax error","expected '"..words.kw["end"].."'", tok.pr:copy()) end
             return Node("func",{ nil, vars, varTypes, values, body, type_ },PositionRange(start, stop))
         end
         body, err = expr() if err then return nil, err end
-        if tok ~= Token("kw","end") then return nil, Error("syntax error", "expected '"..words.kw["end"].."'", tok.pr:copy()) end
         stop = tok.pr.stop:copy()
-        advance()
+        if tok == Token("kw","end") then advance() else return nil, Error("syntax error","expected '"..words.kw["end"].."'", tok.pr:copy()) end
         return Node("func",{ nil, vars, varTypes, values, body, type_ },PositionRange(start, stop))
     end
     func = function()
@@ -605,15 +604,13 @@ local function parse(tokens)
         if tok == Token("nl") then
             while tok == Token("nl") do advance() end
             body, err = statements({ Token("kw","end") }) if err then return nil, err end
-            if tok ~= Token("kw","end") then return nil, Error("syntax error", "expected '"..words.kw["end"].."'", tok.pr:copy()) end
             stop = tok.pr.stop:copy()
-            advance()
+            if tok == Token("kw","end") then advance() else return nil, Error("syntax error","expected '"..words.kw["end"].."'", tok.pr:copy()) end
             return Node("func",{ name, vars, varTypes, values, body, type_ },PositionRange(start, stop))
         end
         body, err = expr() if err then return nil, err end
-        if tok ~= Token("kw","end") then return nil, Error("syntax error", "expected '"..words.kw["end"].."'", tok.pr:copy()) end
         stop = tok.pr.stop:copy()
-        advance()
+        if tok == Token("kw","end") then advance() else return nil, Error("syntax error","expected '"..words.kw["end"].."'", tok.pr:copy()) end
         return Node("func",{ name, vars, varTypes, values, body, type_ },PositionRange(start, stop))
     end
     atom = function()
@@ -1307,6 +1304,7 @@ local function stdScope()
 end
 
 local function interpret(ast)
+    math.randomseed(os.time())
     local scopes = stdScope()
     local nodes, visit
     local function eq(v1, v2)
@@ -2052,6 +2050,7 @@ local function interpret(ast)
         end,
     }
     visit = function(node, ...)
+        math.random()
         if not node then error("no node given", 2) end
         if nodes[node.name] then return nodes[node.name](node, ...) end
         return nodes.notImplemented(node)
