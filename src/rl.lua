@@ -111,6 +111,7 @@ local function str(val, raw, sep, start, stop, middle)
     if raw then if type(val) == "string" then return '"'..val..'"' end end
     return tostring(val)
 end
+local function bool2num(bool) if bool then return 1 else return 0 end end
 
 ---Globals
 local delimiters = {
@@ -1828,7 +1829,7 @@ local function interpret(ast)
                     if func.varTypes[var.args[1].value] and args[i] then
                         local type_ type_, _, err = visit(func.varTypes[var.args[1].value]) if err then return nil, false, err end
                         if typeOfType(type_) ~= typeOfType(args[i]) then
-                            return nil, false, Error("func error","type mismatch for argument #"..str(i)..", got "..tostring(typeOfType(args[i])).." expected "..tostring(typeOfType(type_)),node.pr:copy())
+                            return nil, false, Error("func error","type mismatch for argument #"..str(i-bool2num(selfCall))..", got "..tostring(typeOfType(args[i])).." expected "..tostring(typeOfType(type_)),node.pr:copy())
                         end
                     end
                 end
@@ -1861,6 +1862,14 @@ local function interpret(ast)
                 end
                 local value
                 local mainScopes = scopes.scopes
+                for i, var in ipairs(func.vars) do
+                    if func.varTypes[var] and args[i] then
+                        local type_ type_, _, err = visit(func.varTypes[var]) if err then return nil, false, err end
+                        if typeOfType(type_) ~= typeOfType(args[i]) then
+                            return nil, false, Error("func error","type mismatch for argument #"..str(i-bool2num(selfCall))..", got "..tostring(typeOfType(args[i])).." expected "..tostring(typeOfType(type_)),node.pr:copy())
+                        end
+                    end
+                end
                 scopes.scopes = {}
                 scopes:new(Scope(nil, nil, "func"))
                 scopes.scopes[#scopes.scopes].vars["self"] = headAddr
@@ -1869,7 +1878,7 @@ local function interpret(ast)
                         if not func.values[var] then return nil, false, Error("lua func error", "too few arguments", node.pr:copy()) end
                         args[i], _, err = func.values[var] if err then return nil, false, err end
                     end
-                    if containsKey(scopes.globals, var.args[1].value) then return nil, false, Error("name error", "function variable is a global variable", node.pr:copy()) end
+                    if containsKey(scopes.globals, var) then return nil, false, Error("name error", "function variable is a global variable", node.pr:copy()) end
                     _, err = scopes:set(var, args[i], MEMORY) if err then return nil, false, err end
                 end
                 value, _, err = func.func(scopes, node, args) if err then return nil, false, err end

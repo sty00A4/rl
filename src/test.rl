@@ -1,2 +1,2 @@
 use std.math
-return math.pi
+return math.max(1, 2)
