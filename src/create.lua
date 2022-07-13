@@ -26,14 +26,24 @@ return {
     luaFunc = function(create, name, vars, varTypes, values, func, type_)
         local vars_ = {} for _, v in ipairs(vars) do table.insert(vars_, v) end
         local varTypes_ = {} for k, v in pairs(varTypes) do varTypes_[k] = create:tokNode(v,"type") end
-        return rl.Node("luaFunc",{
-            create:tokNode(name,"name"),
-            vars_,
-            varTypes_,
-            values,
-            func,
-            create:tokNode(type_,"type")
-        },create.PR)
+        if type_ then
+            return rl.Node("luaFunc",{
+                create:tokNode(name,"name"),
+                vars_,
+                varTypes_,
+                values,
+                func,
+                create:tokNode(type_,"type")
+            },create.PR)
+        else
+            return rl.Node("luaFunc",{
+                create:tokNode(name,"name"),
+                vars_,
+                varTypes_,
+                values,
+                func,
+            },create.PR)
+        end
     end,
     luaFuncAnon = function(create, vars, varTypes, values, func, type_)
         local vars_ = {} for _, v in ipairs(vars) do table.insert(vars_, v) end

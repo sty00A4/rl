@@ -684,7 +684,7 @@ local function parse(tokens)
     typecast = function() return binOp(range, { Token("kw","cast") }) end
     contain = function() return binOp(typecast, { Token("kw","contain") }) end
     comp = function() return binOp(contain, { Token("eq"), Token("ne"), Token("lt"), Token("gt"),
-                                           Token("le"), Token("ge") }) end
+                                              Token("le"), Token("ge") }) end
     logic = function()
         if tok == Token("kw","not") then
             local opTok = tok:copy()
@@ -893,14 +893,14 @@ Type = function(type_)
 end
 Null = function()
     return setmetatable(
-    { copy = function() return Null() end,
-      toNumber = function() return Number(0) end,
-      toString = function() return String("null") end,
-      toBool = function() return Bool(false) end,
-      toList = function() return List({}) end,
-      toType = function() return Type("null") end
-    },
-    { __name = "Null", __tostring = function() return "null" end }
+            { copy = function() return Null() end,
+              toNumber = function() return Number(0) end,
+              toString = function() return String("null") end,
+              toBool = function() return Bool(false) end,
+              toList = function() return List({}) end,
+              toType = function() return Type("null") end
+            },
+            { __name = "Null", __tostring = function() return "null" end }
     )
 end
 List = function(values)
@@ -1086,10 +1086,10 @@ push(MEMORY, LuaFunc({ "list", "string" }, { Type("list"), Type("string") }, { s
 end, Type("string")))
 -- STRING split
 push(MEMORY, LuaFunc({ "string", "sep" }, { Type("string"), Type("string") }, { }, function(_, _, args)
-        local list = split(args[1].value, args[2].value)
-        for i = 1, #list do list[i] = String(list[i]) end
-        return List(list)
-    end, Type("list")))
+    local list = split(args[1].value, args[2].value)
+    for i = 1, #list do list[i] = String(list[i]) end
+    return List(list)
+end, Type("list")))
 local function iotaMem() memIota = memIota+1 return memIota end
 local ListFuncs = { push = iotaMem(), pop = iotaMem(), join = iotaMem() }
 local StringFuncs = { split = iotaMem() }
@@ -1800,7 +1800,7 @@ local function interpret(ast)
                 value, _, err = func.func(scopes, node, args) if err then return nil, false, err end
                 scopes.scopes = mainScopes
                 if func.returnType then if type(value) ~= typeOfType(func.returnType) then
-                        return nil, false, Error("func error", "returned value isn't "..str(typeOfType(func.returnType))..", got "..type(value), node.pr:copy())
+                    return nil, false, Error("func error", "returned value isn't "..str(typeOfType(func.returnType))..", got "..type(value), node.pr:copy())
                 end end
                 return value
             end
@@ -1851,17 +1851,17 @@ local function interpret(ast)
                 if n.name == "func" then
                     local funcName = n.args[1].args[1].value
                     local type_ if n.args[6] then
-                        type_, _, err = visit(n.args[6]) if err then return nil, false, err end
-                        if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", n.args[6].pr:copy()) end
-                    end
+                    type_, _, err = visit(n.args[6]) if err then return nil, false, err end
+                    if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", n.args[6].pr:copy()) end
+                end
                     local func = Func(n.args[2], n.args[3], n.args[4], n.args[5], type_) if err then return nil, false, err end
                     funcs[funcName] = func
                 elseif n.name == "luaFunc" then
                     local funcName = n.args[1].args[1].value
                     local type_ if n.args[6] then
-                        type_, _, err = visit(n.args[6]) if err then return nil, false, err end
-                        if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", n.args[6].pr:copy()) end
-                    end
+                    type_, _, err = visit(n.args[6]) if err then return nil, false, err end
+                    if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", n.args[6].pr:copy()) end
+                end
                     local func = LuaFunc(n.args[2], n.args[3], n.args[4], n.args[5], type_) if err then return nil, false, err end
                     funcs[funcName] = func
                 elseif n.name == "assign" then
