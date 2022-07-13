@@ -3,7 +3,7 @@ features
     stack data type
     queue data type
     set data type
-    implement lua files with use node
+    functions to make lua libraries easier to create
     "random" library
 
 fixes

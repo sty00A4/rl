@@ -1059,6 +1059,7 @@ ObjectDef = function(name, vars, funcs, consts)
             { __name = "ObjectDef", __tostring = function(s)
                 local subs = ""
                 for k, _ in pairs(s.vars) do subs = subs..k.."," end
+                for k, _ in pairs(s.consts) do subs = subs..k.."," end
                 for k, _ in pairs(s.funcs) do subs = subs..k.."," end
                 subs = subs:sub(1,#subs-1)
                 return "<objectDef-"..s.name.."("..subs..")>"
@@ -1332,7 +1333,9 @@ local function interpret(ast)
         return type(value)
     end
     nodes = {
-        notImplemented = function(node) return nil, false, Error("not implemented", node.name, node.pr:copy()) end,
+        notImplemented = function(node)
+            print(str(node))
+            return nil, false, Error("not implemented", node.name, node.pr:copy()) end,
         number = function(node) return Number(node.args[1].value) end,
         bool = function(node) return Bool(node.args[1].value == words.bool[1]) end,
         string = function(node) return String(node.args[1].value) end,
@@ -1788,6 +1791,17 @@ local function interpret(ast)
             if node.args[1] then _, err = scopes:set(node.args[1], func, MEMORY) if err then return nil, false, err end end
             return func
         end,
+        luaFunc = function(node)
+            -- 1:name 2:vars 3:varTypes 4:values 5:body 6:type_
+            local type_, err if node.args[6] then
+                type_, _, err = visit(node.args[6]) if err then return nil, false, err end
+                if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[6].pr:copy()) end
+            end
+            local func = LuaFunc(node.args[2], node.args[3], node.args[4], node.args[5], type_)
+            if containsKey(scopes.globals, node.args[1].args[1].value) then return nil, false, Error("name error", "function variable is a global variable", node.args[6].pr:copy()) end
+            if node.args[1] then _, err = scopes:set(node.args[1], func, MEMORY) if err then return nil, false, err end end
+            return func
+        end,
         call = function(node)
             local func, args, err = nil, {}
             local selfCall, headAddr = false
@@ -1960,12 +1974,21 @@ local function interpret(ast)
                     end
                     local func = Func(n.args[2], n.args[3], n.args[4], n.args[5], type_) if err then return nil, false, err end
                     funcs[funcName] = func
-                end
-                if n.name == "assign" then
+                elseif n.name == "luaFunc" then
+                    local funcName = n.args[1].args[1].value
+                    local type_ if n.args[6] then
+                        type_, _, err = visit(n.args[6]) if err then return nil, false, err end
+                        if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", n.args[6].pr:copy()) end
+                    end
+                    local func = LuaFunc(n.args[2], n.args[3], n.args[4], n.args[5], type_) if err then return nil, false, err end
+                    funcs[funcName] = func
+                elseif n.name == "assign" then
                     local varName = n.args[1].args[1].value
                     local value = visit(n.args[2]) if err then return nil, false, err end
-                    vars[varName] = value
-                    if n.args[3] then consts[varName] = value end
+                    if n.args[4] then return nil, false, Error("name error", "cannot create global variable inside object", n.pr:copy()) end
+                    if n.args[3] then consts[varName] = value else vars[varName] = value end
+                else
+                    return nil, false, Error("object error", "expected assignment or function", n.pr:copy())
                 end
             end
             _, err = scopes:set(name,ObjectDef(name, vars, funcs, consts),MEMORY,true,true) if err then return nil, false, err end
@@ -1977,7 +2000,12 @@ local function interpret(ast)
             for k, v in pairs(objectDef.vars) do
                 local addr addr, err = MEMORY:new() if err then return nil, false, err end
                 varAddrs[k] = addr
-                if objectDef.consts[k] then consts[k] = addr end
+                MEMORY[addr] = v
+            end
+            for k, v in pairs(objectDef.consts) do
+                local addr addr, err = MEMORY:new() if err then return nil, false, err end
+                consts[k] = addr
+                varAddrs[k] = addr
                 MEMORY[addr] = v
             end
             for k, v in pairs(objectDef.funcs) do
@@ -1989,8 +2017,15 @@ local function interpret(ast)
         end,
         use = function(node)
             local fn = node.args[1]
+            local luaFile = false
             local file = io.open(fn..".rl", "r")
+            if not file then
+                file = require(fn)
+                if type(file) ~= "Node" then return nil, false, Error("file not found", fn..".rl", node.pr:copy()) end
+                if file then luaFile = true end
+            end
             if not file then return nil, false, Error("file not found", fn..".rl", node.pr:copy()) end
+            if luaFile then return visit(file) end
             local text = file:read("*a")
             file:close()
             local tokens, fileAst, err
@@ -2036,8 +2071,8 @@ end
 return {
     lex = lex, parse = parse, interpret = interpret, str = str, run = run, runfile = runfile,
     Number = Number, Bool = Bool, String = String, Type = Type, Null = Null, List = List, Range = Range,
-    Func = Func, LuaFunc = LuaFunc, Memory = Memory, Scope = Scope, Scopes = Scopes,
-    Token = Token, Node = Node,
+    Func = Func, LuaFunc = LuaFunc, Struct, StructDef, Object, ObjectDef, Memory = Memory, Scope = Scope,
+    Scopes = Scopes, Token = Token, Node = Node, PositionRange = PositionRange, Position = Position, Error = Error,
     ast2str = function(s, ast)
         if not ast then return "()" end
         if type(ast) == "Node" then
