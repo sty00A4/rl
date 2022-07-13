@@ -767,26 +767,31 @@ local function parse(tokens)
             return Node("assert", { node }, PositionRange(start, stop))
         end
         if tok == Token("kw","use") then
-            local path, stop, last = "", tok.pr.stop:copy()
             advance()
+            local paths, stop = {}, tok.pr.stop:copy()
             while tok ~= Token("nl") and tok ~= Token("eof") do
-                if tok.type == "name" then
-                    if last == "name" then return nil, Error("syntax error", "expected '"..symbols.index.."' or new line",tok.pr:copy()) end
-                    path = path .. tok.value
-                    stop = tok.pr.stop:copy()
-                    last = tok.type
-                elseif tok.type == "index" then
-                    if last == "index" then return nil, Error("syntax error", "expected name or new line",tok.pr:copy()) end
-                    path = path .. "/"
-                    stop = tok.pr.stop:copy()
-                    last = tok.type
-                else
-                    return nil, Error("syntax error", "expected name or '"..symbols.index.."'",tok.pr:copy())
+                if tok == Token("sep") then advance() end
+                local path, last = ""
+                while tok ~= Token("sep") and tok ~= Token("nl") and tok ~= Token("eof") do
+                    if tok.type == "name" then
+                        if last == "name" then return nil, Error("syntax error", "expected '"..symbols.index.."' or new line",tok.pr:copy()) end
+                        path = path .. tok.value
+                        stop = tok.pr.stop:copy()
+                        last = tok.type
+                    elseif tok.type == "index" then
+                        if last == "index" then return nil, Error("syntax error", "expected name or new line",tok.pr:copy()) end
+                        path = path .. "/"
+                        stop = tok.pr.stop:copy()
+                        last = tok.type
+                    else
+                        return nil, Error("syntax error", "expected name or '"..symbols.index.."'",tok.pr:copy())
+                    end
+                    advance()
                 end
-                advance()
+                if path == "" then return nil, Error("syntax error", "expected name or index") end
+                push(paths, path)
             end
-            if path == "" then return nil, Error("syntax error", "expected name or index") end
-            return Node("use",{ path },PositionRange(start, stop))
+            return Node("use",paths,PositionRange(start, stop))
         end
         if tok == Token("kw","global") then advance() global = true end
         if tok == Token("kw","const") then advance() const = true end
@@ -1898,30 +1903,34 @@ local function interpret(ast)
             return Object(node.args[1].args[1].value, varAddrs, consts)
         end,
         use = function(node)
-            local fn = node.args[1]
-            local luaFile = false
-            local file = io.open(fn..".rl", "r")
-            if not file then
-                if not pcall(require, fn) then return nil, false, Error("file not found", fn..".lua", node.pr:copy()) end
-                file = require(fn)
-                if type(file) ~= "Node" then return nil, false, Error("file not found", fn..".lua", node.pr:copy()) end
-                return visit(file)
-            end
-            if not file then return nil, false, Error("file not found", fn..".rl", node.pr:copy()) end
-            local text = file:read("*a")
-            file:close()
-            local tokens, fileAst, err
-            tokens, err = lex(fn, text) if err then return nil, false, err end
-            fileAst, err = parse(tokens) if err then return nil, false, err end
-            if fileAst.name == "body" then
-                for _, n in ipairs(fileAst.args) do
-                    if contains({ "assign", "func", "object", "use" }, n.name) then
-                        __, __, err = visit(n) if err then return nil, false, err end
+            for _, path in ipairs(node.args) do
+                local fn = path
+                local luaFile = false
+                local file = io.open(fn..".rl", "r")
+                if not file then
+                    if not pcall(require, fn) then return nil, false, Error("file not found", fn..".lua", path.pr:copy()) end
+                    file = require(fn)
+                    if type(file) ~= "Node" then return nil, false, Error("file not found", fn..".lua", path.pr:copy()) end
+                    local __, __, err = visit(file) if err then return nil, false, err end
+                else
+                    if not file then return nil, false, Error("file not found", fn..".rl", path.pr:copy()) end
+                    local text = file:read("*a")
+                    file:close()
+                    local tokens, fileAst, err
+                    tokens, err = lex(fn, text) if err then return nil, false, err end
+                    fileAst, err = parse(tokens) if err then return nil, false, err end
+                    if fileAst.name == "body" then
+                        for _, n in ipairs(fileAst.args) do
+                            if contains({ "assign", "func", "object", "use" }, n.name) then
+                                __, __, err = visit(n) if err then return nil, false, err end
+                            end
+                        end
+                    else
+                        __, __, err = visit(fileAst) if err then return nil, false, err end
                     end
                 end
-                return Bool(true)
             end
-            return visit(fileAst)
+            return Bool(true)
         end,
     }
     visit = function(node, ...)
