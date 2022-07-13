@@ -3,7 +3,6 @@ features
     stack data type
     queue data type
     set data type
-    functions to make lua libraries easier to create
     "random" library
 
 fixes
