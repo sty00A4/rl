@@ -1,3 +1,2 @@
-use std.io, std.os
-io.write("time: ")
-print(os.time())
+use lib
+test()

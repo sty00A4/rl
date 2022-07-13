@@ -531,7 +531,7 @@ local function parse(tokens)
         if tok == Token("kw","end") then advance() else return nil, Error("syntax error","expected '"..words.kw["end"].."'", tok.pr:copy()) end
         return Node("func",{ nil, vars, varTypes, values, body, type_ },PositionRange(start, stop))
     end
-    func = function()
+    func = function(global)
         local start, stop = tok.pr.start:copy(), tok.pr.stop:copy()
         advance()
         local name, vars, varTypes, values, mustAssign, body, type_, err = nil, {}, {}, {}, false
@@ -571,12 +571,12 @@ local function parse(tokens)
             body, err = statements({ Token("kw","end") }) if err then return nil, err end
             stop = tok.pr.stop:copy()
             if tok == Token("kw","end") then advance() else return nil, Error("syntax error","expected '"..words.kw["end"].."'", tok.pr:copy()) end
-            return Node("func",{ name, vars, varTypes, values, body, type_ },PositionRange(start, stop))
+            return Node("func",{ name, vars, varTypes, values, body, type_, global },PositionRange(start, stop))
         end
         body, err = expr() if err then return nil, err end
         stop = tok.pr.stop:copy()
         if tok == Token("kw","end") then advance() else return nil, Error("syntax error","expected '"..words.kw["end"].."'", tok.pr:copy()) end
-        return Node("func",{ name, vars, varTypes, values, body, type_ },PositionRange(start, stop))
+        return Node("func",{ name, vars, varTypes, values, body, type_, global },PositionRange(start, stop))
     end
     atom = function()
         local tok_ = tok:copy()
@@ -735,7 +735,6 @@ local function parse(tokens)
         local start = tok.pr.start:copy()
         local const, global = false, false
         if tok == Token("kw","if") then return ifExpr() end
-        if tok == Token("kw","func") then return func() end
         if tok == Token("kw","return") then
             advance()
             local stop = tok.pr.stop:copy()
@@ -758,7 +757,6 @@ local function parse(tokens)
         if tok == Token("kw","break") then local tok_=tok:copy() advance() return Node("break",{ tok_:copy() },tok_.pr:copy()) end
         if tok == Token("kw","skip") then local tok_=tok:copy() advance() return Node("skip",{ tok_:copy() },tok_.pr:copy()) end
         if tok == Token("kw","switch") then return switch() end
-        if tok == Token("kw","object") then return object() end
         if tok == Token("kw","assert") then
             advance()
             local stop = tok.pr.stop:copy()
@@ -793,7 +791,9 @@ local function parse(tokens)
             end
             return Node("use",paths,PositionRange(start, stop))
         end
+        if tok == Token("kw","object") then return object() end
         if tok == Token("kw","global") then advance() global = true end
+        if tok == Token("kw","func") then return func(global) end
         if tok == Token("kw","const") then advance() const = true end
         local node, err = expr() if err then return nil, err end
         if tok == Token("kw","assign") then
@@ -1703,25 +1703,25 @@ local function interpret(ast)
         ["break"] = function() return Null(), "break" end,
         skip = function() return Null(), "skip" end,
         func = function(node)
-            -- 1:name 2:vars 3:varTypes 4:values 5:body 6:type_
+            -- 1:name 2:vars 3:varTypes 4:values 5:body 6:type_ 7:global
             local type_, err if node.args[6] then
                 type_, _, err = visit(node.args[6]) if err then return nil, false, err end
                 if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[6].pr:copy()) end
             end
             local func = Func(node.args[2], node.args[3], node.args[4], node.args[5], type_)
             if node.args[1] then if containsKey(scopes.globals, node.args[1].args[1].value) then return nil, false, Error("name error", "function variable is a global variable", node.args[6].pr:copy()) end end
-            if node.args[1] then _, err = scopes:set(node.args[1], func, MEMORY) if err then return nil, false, err end end
+            if node.args[1] then _, err = scopes:set(node.args[1], func, MEMORY, true, node.args[7]) if err then return nil, false, err end end
             return func
         end,
         luaFunc = function(node)
-            -- 1:name 2:vars 3:varTypes 4:values 5:body 6:type_
+            -- 1:name 2:vars 3:varTypes 4:values 5:body 6:type_ 7:global
             local type_, err if node.args[6] then
                 type_, _, err = visit(node.args[6]) if err then return nil, false, err end
                 if type(type_) ~= "Type" then return nil, false, Error("value error", "expected Type", node.args[6].pr:copy()) end
             end
             local func = LuaFunc(node.args[2], node.args[3], node.args[4], node.args[5], type_)
             if node.args[1] then if containsKey(scopes.globals, node.args[1].args[1].value) then return nil, false, Error("name error", "function variable is a global variable", node.args[6].pr:copy()) end end
-            if node.args[1] then _, err = scopes:set(node.args[1], func, MEMORY) if err then return nil, false, err end end
+            if node.args[1] then _, err = scopes:set(node.args[1], func, MEMORY, true, node.args[7]) if err then return nil, false, err end end
             return func
         end,
         call = function(node)

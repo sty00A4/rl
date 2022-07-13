@@ -23,7 +23,7 @@ return {
             global
         },create.PR)
     end,
-    luaFunc = function(create, name, vars, varTypes, values, func, type_)
+    luaFunc = function(create, name, vars, varTypes, values, func, type_, global)
         local vars_ = {} for _, v in ipairs(vars) do table.insert(vars_, v) end
         local varTypes_ = {} for k, v in pairs(varTypes) do varTypes_[k] = create:tokNode(v,"type") end
         if type_ then
@@ -33,7 +33,8 @@ return {
                 varTypes_,
                 values,
                 func,
-                create:tokNode(type_,"type")
+                create:tokNode(type_,"type"),
+                global
             },create.PR)
         else
             return rl.Node("luaFunc",{
@@ -42,6 +43,8 @@ return {
                 varTypes_,
                 values,
                 func,
+                nil,
+                global
             },create.PR)
         end
     end,
